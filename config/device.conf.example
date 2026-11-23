@@ -1,0 +1,49 @@
+# GrainMeter – ustawienia urządzenia
+#
+#   make device-config   tworzy config/device.conf z tego szablonu (prawa 600)
+#   make provision       wgrywa ustawienia do płytki przez USB
+#   make provision-sim   wpisuje je do symulatora (pc-data/grainmeter-pc.conf)
+#
+# config/device.conf jest w .gitignore – zawiera hasła i klucze API.
+# Format: klucz=wartość. Puste pole = bez zmian (zostaje to, co jest w urządzeniu).
+
+# --- wymagane ---------------------------------------------------------------
+# Hasło serwisowe: sieć Wi-Fi trybu serwisowego (WPA2) i zmiany w portalu.
+# 8-63 znaki, bez spacji.
+svc_pass=
+
+# Sieć Wi-Fi przy silosie
+wifi_ssid=
+wifi_pass=
+
+# ThingSpeak – kanał z temperaturami (Channel ID i Write API Key)
+ts_channel=
+ts_key=
+
+# --- zalecane ---------------------------------------------------------------
+# Kanał diagnostyczny (bateria, RSSI, błędy); 0 = wyłączony
+diag_channel=
+diag_key=
+
+# Nazwa urządzenia (np. Silos 1)
+name=
+
+# --- opcjonalne (puste = wartości domyślne) ----------------------------------
+# Okres pomiaru i wysyłki w sekundach (domyślnie 900 i 3600)
+measure_s=
+upload_s=
+# Kanał diagnostyczny co N godzin (domyślnie 6, 0 = przy każdej wysyłce)
+diag_every_h=
+# Progi baterii w mV (domyślnie 3450 / 3300, 0 = wyłączone)
+batt_low_mv=
+batt_crit_mv=
+# Zdalna aktualizacja: adres manifestu i okres sprawdzania w godzinach
+update_url=
+update_check_h=
+# Stały adres IP (puste = DHCP); dns puste = brama
+static_ip=
+gateway=
+netmask=
+dns=
+# Serwer raportów (domyślnie https://api.thingspeak.com)
+report_url=

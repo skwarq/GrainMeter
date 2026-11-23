@@ -27,7 +27,7 @@ static void writeOut(void*, const char* text) {
 }
 
 static void consoleTask(void*) {
-  char line[256];
+  static char line[gm::kShellMaxLine];  // console task only
   size_t len = 0;
   writeOut(nullptr, "\nGrainMeter console - type 'help'\n> ");
   while (true) {

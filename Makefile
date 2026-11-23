@@ -12,6 +12,11 @@
 #                   first USB flash from a GitHub release (checksums + signature)
 #   make flash      first USB flash of the local build (firmware/dist)
 #   make monitor    USB console of the board
+#   make device-config   create config/device.conf (Wi-Fi, ThingSpeak, ...)
+#   make provision  write config/device.conf into the board over USB
+#                   [AUTOMAP=1] map sensors, [TEST_UPLOAD=1] measure + upload once
+#   make provision-sim   same settings for the PC simulator
+#   make setup-board     flash-release + provision in one go
 
 USE_DOCKER ?= 1
 DEV_IMAGE  ?= grainmeter-dev:$(shell sha1sum docker/dev.Dockerfile | cut -c1-12)
@@ -30,12 +35,12 @@ else
 endif
 
 .PHONY: all pc test test-tls run valgrind format format-check firmware frontend check ci clean dev-image help \
-        flash flash-release monitor
+        flash flash-release monitor device-config provision provision-sim setup-board
 
 all: test
 
 help:
-	@sed -n '1,17p' Makefile
+	@sed -n '1,23p' Makefile
 
 dev-image:
 	@docker image inspect $(DEV_IMAGE) >/dev/null 2>&1 || \
@@ -101,6 +106,32 @@ monitor:
 	@test -e $(DEVICE_PORT) || { echo "$(DEVICE_PORT) not found"; exit 1; }
 	docker run --rm -it --device $(DEVICE_PORT) $(IDF_PINNED) \
 		python -m serial.tools.miniterm --eol CR --raw $(DEVICE_PORT) 115200
+
+# --- device settings ----------------------------------------------------------
+DEVICE_CONF ?= config/device.conf
+TEST_UPLOAD ?=
+AUTOMAP     ?=
+
+device-config:
+	@if [ -f $(DEVICE_CONF) ]; then echo "$(DEVICE_CONF) already exists"; \
+	else install -m 600 config/device.conf.example $(DEVICE_CONF) && \
+	echo "created $(DEVICE_CONF) - fill it in, then: make provision"; fi
+
+provision:
+	@test -f $(DEVICE_CONF) || { echo "missing $(DEVICE_CONF) - run: make device-config"; exit 1; }
+	@test -e $(DEVICE_PORT) || { echo "$(DEVICE_PORT) not found - connect the board"; exit 1; }
+	docker run --rm -i --device $(DEVICE_PORT) --group-add $$(stat -c %g $(DEVICE_PORT)) \
+		-u $$(id -u):$$(id -g) -e HOME=/tmp -v "$(CURDIR):$(CURDIR)" -w "$(CURDIR)" $(IDF_PINNED) \
+		python scripts/provision.py device --port $(DEVICE_PORT) --config $(DEVICE_CONF) \
+		$(if $(AUTOMAP),--automap) $(if $(TEST_UPLOAD),--test-upload)
+
+provision-sim:
+	@test -f $(DEVICE_CONF) || { echo "missing $(DEVICE_CONF) - run: make device-config"; exit 1; }
+	python3 scripts/provision.py sim --config $(DEVICE_CONF) --sim-conf pc-data/grainmeter-pc.conf
+
+setup-board: flash-release
+	@sleep 3
+	$(MAKE) provision
 
 check: format-check test test-tls valgrind firmware
 

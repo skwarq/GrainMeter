@@ -117,6 +117,7 @@ int main(int argc, char** argv) {
   std::thread consoleThread;
   if (console) {
     consoleThread = std::thread([&dev]() {
+      std::cout << "> " << std::flush;
       std::string line;
       while (g_running && std::getline(std::cin, line)) {
         if (line == "quit" || line == "exit") {
@@ -124,7 +125,9 @@ int main(int argc, char** argv) {
           break;
         }
         bool restart = false;
-        std::cout << dev.shell(line, &restart) << std::flush;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        // Same prompt as the ESP32 USB console (scripts/provision.py).
+        std::cout << dev.shell(line, &restart) << "> " << std::flush;
         if (restart) {
           dev.requestRestart();
         }

@@ -24,6 +24,7 @@ static const char kHelp[] =
     "                           svc_pass, diag_every_h, batt_low_mv,\n"
     "                           batt_crit_mv, update_url, update_check_h,\n"
     "                           static_ip, gateway, netmask, dns\n"
+    "  apply k=v&k=v ...        set several fields at once (URL-encoded)\n"
     "  upload                   run one upload window now\n"
     "  service | exit-service   enter / leave service mode (ESP32)\n"
     "  sim <action> [k=v ...]   PC fault injection (see README)\n"
@@ -100,7 +101,7 @@ bool Shell::platform(const char* action, const char* args) {
 }
 
 bool Shell::exec(const char* lineIn) {
-  char line[256];
+  char line[kShellMaxLine];
   snprintf(line, sizeof(line), "%s", lineIn);
   size_t len = strlen(line);
   while (len > 0 && (line[len - 1] == '\n' || line[len - 1] == '\r' ||
@@ -201,6 +202,14 @@ bool Shell::exec(const char* lineIn) {
     appendEncoded(body, sizeof(body), &n, value);
     if (app_.applyConfig(Form(body, n), err, sizeof(err))) {
       printf("%s saved\n", rest);  // value intentionally not echoed
+    } else {
+      printf("error: %s\n", err);
+    }
+  } else if (strcmp(cmd, "apply") == 0) {
+    // apply k1=v1&k2=v2 (URL-encoded): all fields validated together and
+    // saved atomically, like the portal form (scripts/provision.py).
+    if (app_.applyConfig(Form(rest, strlen(rest)), err, sizeof(err))) {
+      print("configuration saved\n");
     } else {
       printf("error: %s\n", err);
     }

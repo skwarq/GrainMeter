@@ -67,7 +67,8 @@ case "$mode" in
 esac
 
 [ -e "$PORT" ] || die "$PORT not found - connect the board (USB-C) or set DEVICE_PORT=... (make) / PORT=... (script)"
-DEVICE_ARGS="--device $PORT"
+# The container runs as the calling user: give it the port's group (dialout).
+DEVICE_ARGS="--device $PORT --group-add $(stat -c %g "$PORT")"
 args="$(tr '\n' ' ' < "$flashdir/flash_args.txt")"
 
 if [ "$ERASE" = "1" ]; then

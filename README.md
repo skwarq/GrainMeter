@@ -270,6 +270,27 @@ procedura pierwszego uruchomienia: **[docs/wiring.md](docs/wiring.md)**.
 
 ## Pierwsza konfiguracja (USB)
 
+### Z pliku (zalecane)
+
+```bash
+make device-config        # tworzy config/device.conf (prawa 600, poza gitem)
+# uzupełnij: svc_pass, wifi_ssid, wifi_pass, ts_channel, ts_key (+ opcjonalne)
+make provision            # wgrywa ustawienia do płytki przez USB
+make provision AUTOMAP=1 TEST_UPLOAD=1   # + przypisanie czujników i próbna wysyłka
+make setup-board          # flash-release + provision jednym poleceniem
+make provision-sim        # te same ustawienia dla symulatora PC
+```
+
+`make provision` w razie potrzeby resetuje płytkę, żeby dostać się do konsoli.
+Potem wysyła wszystkie niepuste pola jedną komendą `apply`, a urządzenie
+waliduje je razem i zapisuje atomowo (np. stały IP wymaga bramy i maski).
+Puste pole oznacza „bez zmian”. Hasła i klucze nie są wypisywane – urządzenie
+też ich nigdy nie zwraca. Na koniec pokazuje konfigurację (bez sekretów).
+Port: `DEVICE_PORT=/dev/ttyACM1`. Firmware bez komendy `apply` (v0.1.0)
+dostaje pola pojedynczo.
+
+### Ręcznie w konsoli
+
 Konsola: dowolny terminal szeregowy na porcie USB (115200, wartość nieistotna
 dla USB CDC), np. `python -m serial.tools.miniterm /dev/ttyACM0`. Konsola
 działa bez sieci; urządzenie nie zasypia, dopóki jest używana (60 s od

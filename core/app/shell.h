@@ -8,6 +8,10 @@
 
 namespace gm {
 
+// Longest console line (the provisioning "apply" command carries all
+// settings in one line).
+enum { kShellMaxLine = 1024 };
+
 // Line-oriented service console: USB Serial/JTAG on the ESP32, stdin on PC.
 // Physical access is the trust anchor, so no password is asked here. Secret
 // values are accepted but never echoed.
