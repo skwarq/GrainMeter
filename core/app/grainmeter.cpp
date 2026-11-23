@@ -16,11 +16,13 @@ namespace gm {
 static const char* kTag = "app";
 
 GrainMeter::GrainMeter(const Ports& ports, RetainedState* state,
-                       const ConfigLimits& limits, const char* defaultReportUrl)
+                       const ConfigLimits& limits, const char* defaultReportUrl,
+                       const char* defaultUpdateUrl)
     : p_(ports),
       st_(state),
       limits_(limits),
       defaultReportUrl_(defaultReportUrl),
+      defaultUpdateUrl_(defaultUpdateUrl),
       haveScan_(false),
       haveMeasure_(false),
       configOk_(true),
@@ -32,11 +34,11 @@ GrainMeter::GrainMeter(const Ports& ports, RetainedState* state,
   memset(&scan_, 0, sizeof(scan_));
   memset(&meas_, 0, sizeof(meas_));
   memset(errors_, 0, sizeof(errors_));
-  configDefaults(&cfg_, defaultReportUrl_);
+  configDefaults(&cfg_, defaultReportUrl_, defaultUpdateUrl_);
 }
 
 bool GrainMeter::begin() {
-  configDefaults(&cfg_, defaultReportUrl_);
+  configDefaults(&cfg_, defaultReportUrl_, defaultUpdateUrl_);
   map_.clear();
   const char* err = nullptr;
   configOk_ = configLoad(*p_.store, &cfg_, &map_, &err);

@@ -115,19 +115,61 @@ gm::HttpResult HttpsClient::postJson(const char* url, const char* body,
   return res;
 }
 
+// Sends a GET and follows up to kMaxRedirects redirects (GitHub release
+// downloads redirect to objects.githubusercontent.com). Every hop must stay
+// on https:// and is verified against the CA bundle. Returns the
+// Content-Length (0 = unknown) or -1 with res->error set.
+static const int kMaxRedirects = 5;
+
+static bool isRedirect(int status) {
+  return status == 301 || status == 302 || status == 303 || status == 307 ||
+         status == 308;
+}
+
+int64_t HttpsClient::openGet(esp_http_client_handle_t c, gm::HttpResult* res) {
+  for (int hop = 0; hop <= kMaxRedirects; ++hop) {
+    const esp_err_t err = esp_http_client_open(c, 0);
+    const int64_t length =
+        err == ESP_OK ? esp_http_client_fetch_headers(c) : -1;
+    if (err != ESP_OK || length < 0) {
+      snprintf(res->error, sizeof(res->error), "GET: %s",
+               esp_err_to_name(err != ESP_OK ? err : ESP_FAIL));
+      return -1;
+    }
+    res->status = esp_http_client_get_status_code(c);
+    if (!isRedirect(res->status)) {
+      return length;
+    }
+    int rest = 0;
+    esp_http_client_flush_response(c, &rest);
+    if (esp_http_client_set_redirection(c) != ESP_OK) {
+      snprintf(res->error, sizeof(res->error), "redirect without Location");
+      return -1;
+    }
+    static char next[512];  // single HTTP user (upload window)
+    next[0] = '\0';
+    esp_http_client_get_url(c, next, sizeof(next));
+    if (std::strncmp(next, "https://", 8) != 0) {
+      snprintf(res->error, sizeof(res->error), "redirect to non-https refused");
+      return -1;
+    }
+    esp_http_client_close(c);  // new host: fresh TLS session
+    host_[0] = '\0';           // do not reuse this client for another host
+  }
+  snprintf(res->error, sizeof(res->error), "too many redirects");
+  return -1;
+}
+
 gm::HttpResult HttpsClient::get(const char* url, uint32_t timeoutMs, char* resp,
                                 size_t respCap) {
   gm::HttpResult res = emptyResult();
   if (respCap > 0) resp[0] = '\0';
   esp_http_client_handle_t c = prepare(url, HTTP_METHOD_GET, timeoutMs, &res);
   if (c == nullptr) return res;
-  esp_err_t err = esp_http_client_open(c, 0);
-  if (err != ESP_OK || esp_http_client_fetch_headers(c) < 0) {
-    snprintf(res.error, sizeof(res.error), "GET: %s", esp_err_to_name(err));
+  if (openGet(c, &res) < 0) {
     dropConnection();
     return res;
   }
-  res.status = esp_http_client_get_status_code(c);
   int total = 0;
   while (respCap > 1 && total < static_cast<int>(respCap) - 1) {
     const int n = esp_http_client_read(c, resp + total,
@@ -147,15 +189,11 @@ gm::HttpResult HttpsClient::download(const char* url, uint32_t timeoutMs,
   gm::HttpResult res = emptyResult();
   esp_http_client_handle_t c = prepare(url, HTTP_METHOD_GET, timeoutMs, &res);
   if (c == nullptr) return res;
-  esp_err_t err = esp_http_client_open(c, 0);
-  const int64_t length = err == ESP_OK ? esp_http_client_fetch_headers(c) : -1;
-  if (err != ESP_OK || length < 0) {
-    snprintf(res.error, sizeof(res.error), "download: %s",
-             esp_err_to_name(err));
+  const int64_t length = openGet(c, &res);
+  if (length < 0) {
     dropConnection();
     return res;
   }
-  res.status = esp_http_client_get_status_code(c);
   res.transportOk = true;
   if (res.status != 200 || !sink.begin(static_cast<size_t>(length))) {
     dropConnection();

@@ -144,5 +144,8 @@ mode only). A newer `version` is streamed into the inactive slot through the
 same validation as a portal upload, its SHA-256 must match, the version in
 the image must equal the manifest; then the device restarts (rollback
 protection as for local OTA). `service_id` (optional): each new id opens the
-service portal for `service_min` minutes (1..60) once.
+service portal for `service_min` minutes (1..60) once. Extra keys (e.g.
+`size`) are ignored. HTTP redirects are followed (max. 5, https only), so
+GitHub release URLs such as `/releases/latest/download/manifest.json` work.
+`scripts/make_manifest.py` generates the manifest from an OTA image.
 `sensor` is the index from `sim.probe.devices`, not the measuring point.

@@ -55,7 +55,8 @@ struct Ports {
 class GrainMeter {
  public:
   GrainMeter(const Ports& ports, RetainedState* state,
-             const ConfigLimits& limits, const char* defaultReportUrl);
+             const ConfigLimits& limits, const char* defaultReportUrl,
+             const char* defaultUpdateUrl = "");
 
   // Loads configuration and validates the retained state (re-initialised
   // when corrupt / after power loss). Returns false if the configuration
@@ -124,6 +125,7 @@ class GrainMeter {
   RetainedState* st_;
   ConfigLimits limits_;
   const char* defaultReportUrl_;
+  const char* defaultUpdateUrl_;
   Config cfg_;
   RomMap map_;
   ScanReport scan_;

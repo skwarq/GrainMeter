@@ -152,6 +152,7 @@ gm::HttpResult PcHttpClient::get(const char* url, uint32_t timeoutMs,
     const time_t secs = static_cast<time_t>(timeoutMs / 1000u);
     cli.set_connection_timeout(secs, 0);
     cli.set_read_timeout(secs, 0);
+    cli.set_follow_location(true);  // release downloads redirect
     auto r = cli.Get(path);
     if (!r) {
       std::snprintf(res.error, sizeof(res.error), "%s",
@@ -205,20 +206,27 @@ gm::HttpResult PcHttpClient::download(const char* url, uint32_t timeoutMs,
   const time_t secs = static_cast<time_t>(timeoutMs / 1000u);
   cli.set_connection_timeout(secs, 0);
   cli.set_read_timeout(secs, 0);
+  cli.set_follow_location(true);
   int httpStatus = -1;
+  bool begun = false;
   auto r = cli.Get(
       path,
       [&](const httplib::Response& response) {
         httpStatus = response.status;
+        if (response.status >= 300 && response.status < 400) {
+          return true;  // redirect hop: httplib follows it
+        }
         if (response.status != 200) {
           return false;  // nothing reaches the sink
         }
         const std::string len = response.get_header_value("Content-Length");
-        return sink.begin(
+        begun = sink.begin(
             static_cast<size_t>(std::strtoull(len.c_str(), nullptr, 10)));
+        return begun;
       },
       [&](const char* data, size_t n) {
-        return sink.data(reinterpret_cast<const uint8_t*>(data), n);
+        // bodies of redirect responses are ignored
+        return !begun || sink.data(reinterpret_cast<const uint8_t*>(data), n);
       });
   if (!r) {
     if (httpStatus > 0) {  // stopped by us (HTTP error or sink refused)

@@ -71,6 +71,14 @@ menu "GrainMeter"
         range 1 13
         default 1
 
+    config GM_DEFAULT_UPDATE_URL
+        string "Default remote update manifest URL (empty = off)"
+        default ""
+        help
+            Used until another update_url is stored. The signed release
+            profile (sdkconfig.signed) points it at the GitHub "latest"
+            release manifest, so released devices update themselves.
+
     config GM_DEFAULT_SERVICE_PASSWORD
         string "Service password used when none is stored (empty = require USB setup)"
         default ""

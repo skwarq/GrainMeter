@@ -7,6 +7,8 @@
 # image signing key: never commit
 /firmware/keys/
 *.pem
+# public verification key of the release signing key (safe to publish)
+!/firmware/signing_pubkey.pem
 /firmware/sdkconfig
 /firmware/sdkconfig.old
 /firmware/managed_components/

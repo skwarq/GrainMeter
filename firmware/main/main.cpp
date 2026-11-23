@@ -233,7 +233,8 @@ extern "C" void app_main(void) {
   limits.minMeasureS = 60;
   limits.allowInsecureUrl = false;  // ThingSpeak only over verified HTTPS
   d.app = new gm::GrainMeter(ports, &s_retained, limits,
-                             "https://api.thingspeak.com");
+                             "https://api.thingspeak.com",
+                             CONFIG_GM_DEFAULT_UPDATE_URL);
   d.portal = new gm::Portal(*d.app);
   {
     DeviceLock lock;

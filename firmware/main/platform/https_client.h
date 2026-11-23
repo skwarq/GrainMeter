@@ -23,6 +23,7 @@ class HttpsClient : public gm::HttpClient {
   esp_http_client_handle_t prepare(const char* url, esp_http_client_method_t m,
                                    uint32_t timeoutMs, gm::HttpResult* res);
   void dropConnection();
+  int64_t openGet(esp_http_client_handle_t c, gm::HttpResult* res);
 
   esp_http_client_handle_t client_ = nullptr;
   char host_[96] = "";

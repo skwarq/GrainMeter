@@ -2,11 +2,13 @@
 // Remote firmware update, battery protection and the upload-window budget,
 // exercised through the shared logic with the simulated device.
 #include <gtest/gtest.h>
+#include <httplib.h>
 
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 
 #include "support/fake_image.h"
 #include "support/test_device.h"
@@ -153,4 +155,49 @@ TEST_F(RemoteUpdateTest, EveryWindowSyncsTimeAndUsesOneSession) {
   EXPECT_EQ(windows, 3u);
   EXPECT_EQ(t.dev->network().syncCount(), windows);  // RC clock drift
   EXPECT_EQ(t.dev->http().sessionCount(), windows);
+}
+
+// GitHub-style release URLs: /releases/latest/download/<file> answers 302 to
+// the concrete release, whose assets redirect again to a storage host.
+TEST_F(RemoteUpdateTest, FollowsReleaseRedirects) {
+  const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
+  const std::string bin(img.begin(), img.end());
+  httplib::Server srv;
+  int port = 0;
+  std::string manifest;
+  srv.Get("/releases/latest/download/manifest.json",
+          [](const httplib::Request&, httplib::Response& res) {
+            res.set_redirect("/releases/download/v9.9.9/manifest.json");
+          });
+  srv.Get("/releases/download/v9.9.9/manifest.json",
+          [&](const httplib::Request&, httplib::Response& res) {
+            res.set_content(manifest, "application/json");
+          });
+  srv.Get("/releases/download/v9.9.9/fw.bin",
+          [](const httplib::Request&, httplib::Response& res) {
+            res.set_redirect("/storage/abc123");
+          });
+  srv.Get("/storage/abc123",
+          [&](const httplib::Request&, httplib::Response& res) {
+            res.set_content(bin, "application/octet-stream");
+          });
+  port = srv.bind_to_any_port("127.0.0.1");
+  ASSERT_GT(port, 0);
+  std::thread th([&] { srv.listen_after_bind(); });
+  srv.wait_until_ready();
+  const std::string base = "http://127.0.0.1:" + std::to_string(port);
+  manifest = "{\"version\":\"9.9.9\",\"url\":\"" + base +
+             "/releases/download/v9.9.9/fw.bin\",\"sha256\":\"" + hexSha(img) +
+             "\",\"size\":150000}";
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    const std::string body = "update_url=" + base +
+                             "%2Freleases%2Flatest%2Fdownload%2Fmanifest.json";
+    configure(body.c_str());
+  }
+  t.runFor(3600);
+  srv.stop();
+  th.join();
+  EXPECT_EQ(code(), gm::RemoteUpdateResult::Updated) << result();
+  EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_1");
 }

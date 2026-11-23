@@ -67,7 +67,10 @@ struct ConfigLimits {
   bool allowInsecureUrl;  // PC: http:// and mock:// allowed
 };
 
-void configDefaults(Config* cfg, const char* defaultReportUrl);
+// defaultUpdateUrl: manifest URL used until the user stores another value
+// (firmware: CONFIG_GM_DEFAULT_UPDATE_URL, empty = remote update off).
+void configDefaults(Config* cfg, const char* defaultReportUrl,
+                    const char* defaultUpdateUrl = "");
 
 // Loads config + ROM map; missing keys keep defaults. Returns false if a
 // stored value was invalid (it is then ignored and reported via *err).

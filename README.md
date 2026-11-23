@@ -21,6 +21,7 @@ wirtualną sondą) i na **DFRobot FireBeetle 2 ESP32-C6 (DFR1075)**.
 - [Tryb serwisowy i lokalne OTA](#tryb-serwisowy-i-lokalne-ota)
 - [Energooszczędność](#energooszczędność)
 - [Zdalna aktualizacja i podpisywanie obrazów](#zdalna-aktualizacja-i-podpisywanie-obrazów)
+- [Wydania i podpisywanie w CI](#wydania-i-podpisywanie-w-ci)
 - [Portal (frontend)](#portal-frontend)
 - [CI](#ci)
 - [Do potwierdzenia na sprzęcie](#do-potwierdzenia-na-sprzęcie)
@@ -116,7 +117,7 @@ błąd `network: AP 'SimulatedWiFi' not found (simulated outage)`, bufor rośnie
 
 ## Testy, formatowanie, Valgrind
 
-- `cmake --workflow --preset dev` – 105 testów GoogleTest (CTest).
+- `cmake --workflow --preset dev` – 106 testów GoogleTest (CTest).
   Jednostkowe: CRC/ROM, Search ROM na symulowanej magistrali, dekodowanie
   DS18B20 (tabela z datasheetu, 0,0 °C, brak, CRC, 85 °C power-on, zwarcie,
   rozdzielczości), trwałe mapowanie ROM (zapis + odczyt „po restarcie”),
@@ -155,7 +156,7 @@ Wynik w `firmware/dist/`:
   `flash_args.txt`.
 
 Skrypt sprawdza, czy aplikacja mieści się w **obu** slotach OTA (z binarnej
-tablicy partycji). Aktualnie: aplikacja 1 232 656 B, slot 1 966 080 B (37 % wolne).
+tablicy partycji). Aktualnie: aplikacja 1 233 552 B, slot 1 966 080 B (37 % wolne).
 
 Partycje (`firmware/partitions.csv`, flash 4 MB ESP32-C6FH4): `nvs` 24 KiB,
 `otadata`, `phy_init`, `ota_0` i `ota_1` po 1,875 MiB, `coredump` 64 KiB.
@@ -400,10 +401,85 @@ GM_SIGNED=1 scripts/build-firmware.sh     # wynik: firmware/dist-signed/
 
 Urządzenie z firmware podpisanym przyjmie później tylko obrazy podpisane tym
 samym kluczem (utrata klucza = aktualizacja tylko przez USB). Pierwsze
-przejście na profil podpisany wymaga wgrania obrazu z `dist-signed`. CI
-buduje wersję bez podpisu (nie ma sekretów); podpis wykonuje lokalnie osoba
-wydająca wersję. Sprawdzone lokalnie kluczem testowym: build przechodzi, a
+przejście na profil podpisany wymaga wgrania obrazu z `dist-signed`. Zwykłe CI
+buduje wersję bez podpisu (bez sekretów). Podpisane wydania robi workflow
+Release – patrz [Wydania i podpisywanie w CI](#wydania-i-podpisywanie-w-ci). Sprawdzone lokalnie kluczem testowym: build przechodzi, a
 `espsecure verify-signature` potwierdza podpis.
+
+## Wydania i podpisywanie w CI
+
+Wypchnięcie tagu `vX.Y.Z` (zgodnego z plikiem `VERSION`) uruchamia
+`.github/workflows/release.yml`. Workflow buduje podpisany firmware, sprawdza
+podpis kluczem publicznym z repozytorium i tworzy GitHub Release z plikami:
+
+| Plik | Do czego |
+| --- | --- |
+| `grainmeter-X.Y.Z-esp32c6-ota.bin` | aktualizacja z portalu albo zdalna |
+| `manifest.json` | manifest zdalnej aktualizacji (`version`, `url`, `sha256`) |
+| `grainmeter-X.Y.Z-esp32c6-flash.zip` | pierwsze flashowanie USB (profil podpisany) |
+| `signing_pubkey.pem`, `SHA256SUMS` | weryfikacja |
+
+Firmware w profilu podpisanym ma domyślnie
+`update_url = https://github.com/skwarq/GrainMeter/releases/latest/download/manifest.json`,
+więc urządzenia same instalują najnowsze wydanie (domyślnie sprawdzają raz na
+dobę). Klient HTTPS urządzenia podąża za przekierowaniami GitHuba (maks. 5,
+tylko `https://`, każdy host z weryfikacją certyfikatu).
+
+### Jednorazowa konfiguracja
+
+1. **Klucz podpisujący** – lokalnie, poza repozytorium:
+
+   ```bash
+   mkdir -p ~/grainmeter-key && chmod 700 ~/grainmeter-key
+   docker run --rm -v ~/grainmeter-key:/k -u $(id -u):$(id -g) espressif/idf:v6.1.1 bash -c \
+     'espsecure generate-signing-key --version 2 --scheme rsa3072 /k/signing_key.pem &&
+      espsecure extract-public-key --version 2 --keyfile /k/signing_key.pem /k/signing_pubkey.pem'
+   cp ~/grainmeter-key/signing_pubkey.pem firmware/signing_pubkey.pem   # publiczny – do commita
+   ```
+
+   Zrób kopię zapasową `signing_key.pem` w bezpiecznym miejscu, np. w
+   menedżerze haseł albo na zaszyfrowanym nośniku. Utrata klucza oznacza, że
+   urządzenia z profilem podpisanym da się aktualizować już tylko przez USB.
+2. **Środowisko `release`**: Settings → Environments → *New environment*
+   `release`:
+   - *Deployment branches and tags* → *Selected* → reguła tagu `v*`;
+   - *Required reviewers* → Ty (każde wydanie czeka na Twoje zatwierdzenie);
+   - *Environment secrets* → `FIRMWARE_SIGNING_KEY` = cała zawartość
+     `signing_key.pem`.
+3. **Ochrona tagów**: Settings → Rules → Rulesets → *New tag ruleset* dla
+   `v*`: blokada tworzenia, zmiany i usuwania z wyjątkiem administratora.
+4. Konto GitHub z **2FA**.
+5. Repozytorium publiczne: Settings → General → *Change visibility*.
+
+### Wydanie wersji
+
+```bash
+echo 0.2.0 > VERSION
+git commit -am "Release 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+# Actions → Release → "Review deployments" → Approve
+```
+
+### Dlaczego to bezpieczne
+
+- Klucz prywatny jest tylko sekretem środowiska `release`. Nie dostają go joby
+  CI na push/PR ani pull requesty z forków. Każde użycie wymaga tagu `v*` i
+  Twojego zatwierdzenia.
+- Na runnerze klucz istnieje tylko podczas budowania (plik z prawami 600),
+  potem jest usuwany w kroku `always()`. Workflow nigdy go nie wypisuje, a
+  GitHub dodatkowo maskuje sekrety w logach.
+- Narzędzia, które widzą klucz, są przypięte: obraz ESP-IDF po digeście SHA-256,
+  akcje GitHuba po SHA commita.
+- Przed publikacją podpis jest sprawdzany kluczem publicznym z repozytorium,
+  więc pomyłka z kluczem zatrzymuje wydanie.
+- Urządzenie sprawdza niezależnie: podpis RSA-3072 (profil podpisany),
+  SHA-256 z manifestu, chip, projekt i wersję. Rollback chroni przed obrazem,
+  który nie wystartuje. Publiczne pliki nikomu nie pozwalają wgrać własnego
+  firmware bez klucza.
+- Ryzyko szczątkowe to przejęcie Twojego konta GitHub (stąd 2FA i
+  zatwierdzanie wydań). Rotacja klucza: dołączenie drugiego podpisu do obrazu
+  (Secure Boot V2 obsługuje do 3 bloków podpisu) albo przeflashowanie USB.
 
 ## Portal (frontend)
 
@@ -434,6 +510,7 @@ bez sekretów, akcje przypięte do SHA):
 | Format + Valgrind | `make format-check`, `make valgrind` (obraz `docker/dev.Dockerfile`) |
 | Portal UI | `npm ci && npm run verify`, kontrola że `portal/` jest aktualny |
 | Firmware esp32c6 | `scripts/build-firmware.sh` w `espressif/idf:v6.1.1`, kontrola mieszczenia w slotach OTA, artefakt `grainmeter-firmware-esp32c6-<sha>` (plik OTA + pliki pierwszego flashowania) |
+| Release (tag `v*`) | podpisany firmware, manifest, GitHub Release – patrz wyżej |
 
 ## Do potwierdzenia na sprzęcie
 

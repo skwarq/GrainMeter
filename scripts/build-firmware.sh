@@ -6,7 +6,9 @@
 #                firmware/keys/signing_key.pem, output in firmware/dist-signed/
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.1.1}"
+# Pinned by digest (v6.1.1): the release job hands the signing key to this
+# image, so the tag must not be able to change underneath us.
+IDF_IMAGE="${IDF_IMAGE:-espressif/idf:v6.1.1@sha256:2b4f966c37eaedc19542b0637a5f850b2eff9478d8e858192aa0073d92c2dc91}"
 
 if [ -n "${IDF_PATH:-}" ] && [ "${GM_NO_DOCKER:-0}" = "1" ]; then
     RUN=(bash -c)

@@ -1,0 +1,106 @@
+# Signed firmware release, triggered by pushing a tag "vX.Y.Z" that matches
+# the VERSION file. Produces a GitHub Release with:
+#   grainmeter-X.Y.Z-esp32c6-ota.bin   signed OTA image (portal / remote update)
+#   manifest.json                      remote update manifest (version, url, sha256)
+#   grainmeter-X.Y.Z-esp32c6-flash.zip first USB flash (signed profile)
+#   SHA256SUMS
+# Devices built with the signed profile fetch
+#   https://github.com/<repo>/releases/latest/download/manifest.json
+#
+# Security model (see README "Wydania i podpisywanie w CI"):
+# - the private key exists only as the secret FIRMWARE_SIGNING_KEY of the
+#   GitHub Environment "release" (restricted to v* tags, required reviewer),
+#   so pull requests, forks and the normal CI never see it
+# - it is written to disk with mode 600 only for the build and deleted in an
+#   always() step; nothing echoes it
+# - the toolchain image is pinned by digest (scripts/build-firmware.sh)
+# - the signed image is verified against the committed public key
+#   firmware/signing_pubkey.pem before anything is published
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Signed firmware release
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write # create the GitHub Release only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Tag matches VERSION
+        run: |
+          version="$(head -n1 VERSION)"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match VERSION ${version}"
+            exit 1
+          fi
+          echo "VERSION=${version}" >> "$GITHUB_ENV"
+          test -f firmware/signing_pubkey.pem || {
+            echo "::error::firmware/signing_pubkey.pem missing (see README)"; exit 1; }
+
+      - name: Install signing key (temporary)
+        env:
+          FIRMWARE_SIGNING_KEY: ${{ secrets.FIRMWARE_SIGNING_KEY }}
+        run: |
+          if [ -z "${FIRMWARE_SIGNING_KEY}" ]; then
+            echo "::error::secret FIRMWARE_SIGNING_KEY missing in environment 'release'"
+            exit 1
+          fi
+          umask 077
+          mkdir -p firmware/keys
+          printf '%s\n' "${FIRMWARE_SIGNING_KEY}" > firmware/keys/signing_key.pem
+
+      - name: Build signed firmware (ESP-IDF v6.1.1, pinned digest)
+        run: GM_SIGNED=1 scripts/build-firmware.sh build
+
+      - name: Remove signing key
+        if: always()
+        run: |
+          if [ -f firmware/keys/signing_key.pem ]; then
+            shred -u firmware/keys/signing_key.pem 2>/dev/null || rm -f firmware/keys/signing_key.pem
+          fi
+
+      - name: Verify signature with the committed public key
+        run: |
+          docker run --rm -v "$PWD:/project" -w /project -u "$(id -u):$(id -g)" -e HOME=/tmp \
+            "espressif/idf:v6.1.1@sha256:2b4f966c37eaedc19542b0637a5f850b2eff9478d8e858192aa0073d92c2dc91" \
+            espsecure verify-signature --version 2 --keyfile firmware/signing_pubkey.pem \
+            "firmware/dist-signed/grainmeter-${VERSION}-esp32c6-ota.bin"
+
+      - name: Manifest, flash bundle, checksums
+        run: |
+          out=release
+          mkdir -p "$out"
+          ota="grainmeter-${VERSION}-esp32c6-ota.bin"
+          cp "firmware/dist-signed/${ota}" "$out/"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ota}"
+          python3 scripts/make_manifest.py "$out/${ota}" "$url" "$out/manifest.json" \
+            --expect-version "${VERSION}"
+          (cd firmware/dist-signed/flash && zip -q -r "../../../$out/grainmeter-${VERSION}-esp32c6-flash.zip" .)
+          cp firmware/signing_pubkey.pem "$out/"
+          (cd "$out" && sha256sum -- * > SHA256SUMS)
+          cat "$out/SHA256SUMS"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "GrainMeter ${VERSION}" \
+            --verify-tag \
+            --notes "Signed firmware ${VERSION} for FireBeetle 2 ESP32-C6. Devices with the signed profile update themselves from manifest.json; first flash: grainmeter-${VERSION}-esp32c6-flash.zip (see README)."

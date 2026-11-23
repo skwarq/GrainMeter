@@ -25,7 +25,8 @@ static void copyStr(char* dst, size_t cap, const char* src) {
   snprintf(dst, cap, "%s", src);
 }
 
-void configDefaults(Config* cfg, const char* defaultReportUrl) {
+void configDefaults(Config* cfg, const char* defaultReportUrl,
+                    const char* defaultUpdateUrl) {
   memset(cfg, 0, sizeof(*cfg));
   copyStr(cfg->deviceName, sizeof(cfg->deviceName), "GrainMeter");
   copyStr(cfg->reportUrl, sizeof(cfg->reportUrl), defaultReportUrl);
@@ -35,6 +36,8 @@ void configDefaults(Config* cfg, const char* defaultReportUrl) {
   cfg->battLowMv = 3450;   // Li-ion ~15 %: economy mode
   cfg->battCritMv = 3300;  // ~5 %: measure only, no radio
   cfg->updateCheckH = 24;
+  copyStr(cfg->updateUrl, sizeof(cfg->updateUrl),
+          defaultUpdateUrl != nullptr ? defaultUpdateUrl : "");
 }
 
 // ---- validation helpers ----------------------------------------------------
