@@ -1,0 +1,148 @@
+# GrainMeter portal REST API
+
+The same API is served by the PC simulator (cpp-httplib) and by the ESP32
+firmware in service mode (esp_http_server). Request routing and JSON are
+produced by shared code (`core/app/portal.cpp`, `core/app/grainmeter.cpp`), so
+both platforms answer identically. Sample responses: `docs/api-samples/`.
+
+## Conventions
+
+- Responses are `application/json`. Errors: `{"ok":false,"error":"text"}` with
+  a 4xx/5xx status. Simple actions: `{"ok":true,"message":"text"}`.
+- Temperatures are numbers in °C with two decimals, or `null` when there is no
+  valid reading. A missing value is **never** `0`; `0.00` is a real reading.
+- Every `POST` requires the service password in the `X-GM-Password` header.
+  Wrong/missing password: `401`. After 5 wrong attempts writes are locked for
+  60 s (also `401`). A custom header cannot be sent cross-site without a CORS
+  preflight, which the device never allows (CSRF protection).
+- Form bodies are `application/x-www-form-urlencoded`, max 2 KiB.
+- Secrets (Wi-Fi password, write keys, service password) are never returned;
+  the API reports `*_set: true/false` instead.
+
+## Read-only endpoints
+
+| Method | Path | Result |
+| --- | --- | --- |
+| GET | `/api/status` | compact status for the dashboard (poll every few seconds) |
+| GET | `/api/diag` | full diagnostics: status + `config`, `rom_map`, `scan` |
+| GET | `/api/config` | configuration without secrets |
+| GET | `/api/ota` | state of the current/last firmware upload |
+
+### `/api/status` fields
+
+`firmware`, `platform` (`"pc-sim"` or `"esp32c6"`), `name`, `mono_s`,
+`time_valid`, `epoch` (UTC, 0 if unknown), `wake_reason`, `reset_reason`,
+`battery_mv` (number or `null`), `wifi{state,ssid,rssi}`, `config_ok`,
+`upload_configured`, `schedule{measure_s,upload_s,samples_per_upload,
+next_measure_in_s,upload_due}`, `measurement` (or `null`), `buffer`,
+`last_upload` (or `null`), `power`, `remote_update`, `errors[]`, `ota`, and
+a platform object: `sim` on PC, `esp` on the ESP32.
+
+`power`: `mode` (`normal` / `economy` / `critical`), `battery_mv` (or
+`null`), `low_mv`, `crit_mv` (0 = threshold disabled). Economy: uploads 4x
+less often. Critical: no radio at all, measuring interval doubled.
+
+`remote_update`: `enabled`, `running` (version), `latest` (from the
+manifest, "" if never seen), `result` (`never_checked`, `up_to_date`,
+`updated`, `failed`, `skipped`, `service_requested`), `message`,
+`rejected` (version rolled back after a failed first start; never retried),
+`last_check_age_s` (or `null`).
+
+`measurement`: `mono_s`, `age_s`, `epoch`, `presence`, `conversion_ms`,
+`conversion_timeout`, `points[8]` (`point`, `rom`|null, `height_cm`|null,
+`status`, `temp_c`|null) and `unmapped[]` (`rom`, `family`, `family_name`,
+`status`, `temp_c`).
+
+Sensor `status` values: `ok`, `missing`, `crc_error`, `unsupported_family`,
+`power_on_value` (85 °C register value, conversion did not run), `bus_error`
+(line stuck low), `out_of_range`, `not_mapped`.
+
+`buffer`: `count`, `capacity`, `next_seq`, `oldest_seq`, `dropped_overflow`,
+`dropped_no_time`, `upload_ok`, `upload_fail`, `wake_count`,
+`recovered_after_power_loss`.
+
+`last_upload`: `ok`, `diag_ok`, `http_status`, `epoch`, `age_s`,
+`samples_sent`, `samples_confirmed`, `message`.
+
+`errors[]`: up to 8 most recent `{age_s, text}`, oldest first.
+
+`ota`: `state` (`idle`/`receiving`/`done`/`failed`), `received`, `expected`,
+`file`, `error`, and after a valid header `version`, `project`, `idf`.
+
+`esp` (ESP32 only): `service_mode`, `ap_ssid`, `ap_ip`, `ap_clients`,
+`service_timeout_s`, `running_partition`, `next_partition`, `slot_size`,
+`app_state` (`valid`/`pending_verify`/...), `free_heap`, `onewire_gpio`,
+`service_wake_gpio` (-1 = none), `rejected_firmware`.
+
+`sim` (PC only): `speed`, `network_up`, `lost_response`, `http_posts`,
+`mock_entries_main`, `mock_entries_diag`, `config_file`,
+`ota_slots{running,pending_new_image,last_boot,rejected,fail_next_boot}`,
+`battery_override_mv` (0 = simulated curve), `service_requests`,
+`time_syncs`, `http_sessions`,
+`probe{shorted, devices[{index, rom, present, crc_faults, temp_c}]}`.
+
+## Actions (POST, password required)
+
+| Path | Body | Effect |
+| --- | --- | --- |
+| `/api/login` | – | checks the password (`200` or `401`) |
+| `/api/config` | any of `name, wifi_ssid, wifi_pass, wifi_pass_clear, report_url, ts_channel, ts_key, diag_channel, diag_key, measure_s, upload_s, svc_pass, diag_every_h, batt_low_mv, batt_crit_mv, update_url, update_check_h, static_ip, gateway, netmask, dns` | validates all, saves (NVS / file); empty secret = keep |
+| `/api/scan` | – | Search ROM; returns `/api/diag` |
+| `/api/measure` | `store` (optional) | read all sensors; returns `/api/status` |
+| `/api/upload` | – | one upload window now: `{ok,message,http_status,samples_confirmed}` |
+| `/api/map` | `rom`, `point` (1..8), `height_cm` (optional, -1..32767) | assign sensor to point |
+| `/api/unmap` | `rom` | remove assignment |
+| `/api/automap` | – | assign unmapped sensors to free points (ROM order) |
+| `/api/restart` | – | reply, then restart |
+| `/api/service/exit` | – | ESP32: leave service mode, resume deep-sleep cycle |
+| `/api/sim` | `action` + args | PC only, fault injection (below) |
+| `/api/ota` | firmware file | see below |
+
+### Firmware upload `POST /api/ota`
+
+Either a normal HTML file form (`multipart/form-data`, first file part is
+used; any file name) or the raw image (`application/octet-stream`, optional
+`X-File-Name`). The content decides: ESP-IDF image magic, chip ESP32-C6,
+project `grainmeter`, size within the OTA slot. The image is streamed to the
+inactive slot and selected for boot only after full validation; then the
+reply `{ok:true, version, bytes}` is sent and the device restarts. Errors:
+`401`, `409` (busy), `411`, `413` (too large), `415` (not a GrainMeter
+ESP32-C6 image), `422` (image verification failed), `500` (flash error).
+
+### Simulation `POST /api/sim` (PC)
+
+`action=` `crc` (`sensor`, `count` = reads, -1 = permanent), `remove` /
+`restore` (`sensor`), `temp` (`sensor`, `value` °C), `unsupported`
+(`arg=on|off`, adds a DS18S20 0x10), `short` (`arg=on|off`, DATA stuck low),
+`net` (`arg=down|up`), `lost_response` (`arg=on|off`: server stores, reply
+lost), `speed` (`value`), `advance` (`seconds`), `powerloss`, `battery`
+(`value` mV, 0 = simulated curve), `ota_fail_boot` (`arg=on|off`: the next
+new image fails its first start and is rolled back).
+
+## Configuration fields (new in v0.2)
+
+| Field | Range | Meaning |
+| --- | --- | --- |
+| `diag_every_h` | 0..168 (default 6) | diagnostic channel every N hours, 0 = every upload |
+| `batt_low_mv` | 0 or 2500..4500 (3450) | below: economy mode |
+| `batt_crit_mv` | 0 or 2500..4500 (3300), <= low | below: critical mode |
+| `update_url` | "" or https:// (PC also http://, mock://) | remote update manifest |
+| `update_check_h` | 0..720 (24) | manifest check period, 0 = off |
+| `static_ip`, `gateway`, `netmask`, `dns` | "" or a.b.c.d | static IPv4 (empty = DHCP); dns defaults to gateway |
+
+## Remote update manifest
+
+```json
+{"version": "0.2.0",
+ "url": "https://example.com/grainmeter-0.2.0-esp32c6-ota.bin",
+ "sha256": "<sha256sum of the .bin>",
+ "service_id": 7, "service_min": 15}
+```
+
+Checked during an upload window every `update_check_h` hours (normal power
+mode only). A newer `version` is streamed into the inactive slot through the
+same validation as a portal upload, its SHA-256 must match, the version in
+the image must equal the manifest; then the device restarts (rollback
+protection as for local OTA). `service_id` (optional): each new id opens the
+service portal for `service_min` minutes (1..60) once.
+`sensor` is the index from `sim.probe.devices`, not the measuring point.

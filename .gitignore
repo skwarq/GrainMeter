@@ -1,0 +1,28 @@
+# build output
+/build/
+/firmware/build/
+/firmware/dist/
+/firmware/build-signed/
+/firmware/dist-signed/
+# image signing key: never commit
+/firmware/keys/
+*.pem
+/firmware/sdkconfig
+/firmware/sdkconfig.old
+/firmware/managed_components/
+/firmware/dependencies.lock.bak
+
+# local PC simulator data: contains Wi-Fi password, API keys, service password
+/pc-data/
+*.conf
+receiver.jsonl
+
+# frontend
+/frontend/node_modules/
+/frontend/dist/
+
+# editors
+.vscode/
+.idea/
+*.swp
+compile_commands.json

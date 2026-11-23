@@ -1,0 +1,81 @@
+menu "GrainMeter"
+
+    config GM_ONEWIRE_GPIO
+        int "1-Wire DATA GPIO"
+        range 0 23
+        default 3
+        help
+            GPIO for the probe DATA line (Hirschmann CA 3 GD pin 2, red).
+            Default GPIO3 = header P1 pin 8 "IO3/A2" on FireBeetle 2 ESP32-C6:
+            not a strapping pin, not used on the board. Avoid GPIO4/5/8/9/15
+            (strapping), 12/13 (USB), 16/17 (UART0) and GPIO0 (battery ADC).
+            External 4.7 kOhm pull-up to 3V3 is required.
+
+    config GM_ONEWIRE_INTERNAL_PULLUP
+        bool "Also enable the weak internal pull-up on DATA"
+        default y
+
+    config GM_SERVICE_BUTTON_GPIO
+        int "Service mode button GPIO"
+        range 0 23
+        default 9
+        help
+            Default GPIO9 = BOOT button. Holding BOOT while resetting selects
+            the ROM download mode, so the firmware only samples it AFTER it
+            started: press RST, release, then press BOOT within the window.
+
+    config GM_SERVICE_WAKE_GPIO
+        int "Service button that wakes from deep sleep (LP GPIO, -1 = none)"
+        range -1 7
+        default 2
+        help
+            Button between this GPIO and GND opens the service portal straight
+            from deep sleep (EXT1 wake-up) without a reset, so the samples
+            waiting in RTC memory are kept. Only LP GPIO0..7 can wake the
+            ESP32-C6. Default GPIO2 = header P1 pin 9 "IO2/A1" (free on the
+            board, not a strapping pin). Add an external 10 kOhm pull-up to 3V3
+            (the internal one is enabled too).
+
+    config GM_SERVICE_BUTTON_WINDOW_MS
+        int "Window after power-on/reset to press the service button (ms)"
+        default 3000
+
+    config GM_SERVICE_TIMEOUT_S
+        int "Leave service mode after this many idle seconds"
+        default 600
+
+    config GM_LED_GPIO
+        int "Status LED GPIO (-1 = none)"
+        range -1 23
+        default 15
+
+    config GM_BATTERY_ADC
+        bool "Measure battery voltage"
+        default y
+        help
+            FireBeetle 2 ESP32-C6 V1.0/V1.1: VBAT -> R15 1M / R16 1M -> GPIO0
+            (ADC1 channel 0), 100 nF to GND.
+
+    config GM_BATTERY_GPIO
+        int "Battery ADC GPIO"
+        depends on GM_BATTERY_ADC
+        default 0
+
+    config GM_BATTERY_DIVIDER_X1000
+        int "Battery divider ratio x1000 (VBAT / VADC)"
+        depends on GM_BATTERY_ADC
+        default 2000
+
+    config GM_AP_CHANNEL
+        int "SoftAP channel"
+        range 1 13
+        default 1
+
+    config GM_DEFAULT_SERVICE_PASSWORD
+        string "Service password used when none is stored (empty = require USB setup)"
+        default ""
+        help
+            Leave empty in the repository. Set it only in a local sdkconfig
+            if devices must start with a known password.
+
+endmenu

@@ -1,0 +1,9 @@
+# Optional production profile: the application accepts only OTA images
+# signed with the project key (RSA-3072, Secure Boot V2 signature format,
+# without eFuse secure boot). Applies to portal uploads and remote updates.
+# Build: GM_SIGNED=1 scripts/build-firmware.sh  (key: firmware/keys/signing_key.pem)
+CONFIG_SECURE_SIGNED_APPS_NO_SECURE_BOOT=y
+CONFIG_SECURE_SIGNED_APPS_RSA_SCHEME=y
+CONFIG_SECURE_SIGNED_ON_UPDATE_NO_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="keys/signing_key.pem"

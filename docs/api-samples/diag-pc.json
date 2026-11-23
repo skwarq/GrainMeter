@@ -1,0 +1,311 @@
+{
+  "firmware": "0.1.0",
+  "platform": "pc-sim",
+  "mono_s": 8412,
+  "time_valid": true,
+  "wake_reason": "power-on",
+  "reset_reason": "power-on",
+  "battery_mv": 3993,
+  "wifi": {
+    "state": "off",
+    "rssi": 0
+  },
+  "config": {
+    "name": "GrainMeter",
+    "wifi_ssid": "SimulatedWiFi",
+    "wifi_pass_set": true,
+    "report_url": "mock://thingspeak",
+    "ts_channel": 1000001,
+    "ts_key_set": true,
+    "diag_channel": 1000002,
+    "diag_key_set": true,
+    "measure_s": 900,
+    "upload_s": 3600,
+    "samples_per_upload": 4,
+    "svc_pass_set": true
+  },
+  "rom_map": [
+    {
+      "rom": "280DF0AD2B160337",
+      "point": 1,
+      "height_cm": -1
+    },
+    {
+      "rom": "281F1F6C6C16034A",
+      "point": 2,
+      "height_cm": -1
+    },
+    {
+      "rom": "2833C2110A160372",
+      "point": 3,
+      "height_cm": -1
+    },
+    {
+      "rom": "2842009E5D16033E",
+      "point": 4,
+      "height_cm": -1
+    },
+    {
+      "rom": "28A401007F160347",
+      "point": 5,
+      "height_cm": -1
+    },
+    {
+      "rom": "28C3B2A100160396",
+      "point": 6,
+      "height_cm": -1
+    },
+    {
+      "rom": "28D0C1B23316033D",
+      "point": 7,
+      "height_cm": -1
+    },
+    {
+      "rom": "28FF64851E160304",
+      "point": 8,
+      "height_cm": -1
+    }
+  ],
+  "scan": {
+    "age_s": 714,
+    "presence": true,
+    "bus_error": false,
+    "truncated": false,
+    "rom_crc_errors": 0,
+    "devices": [
+      {
+        "rom": "280DF0AD2B160337",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 1
+      },
+      {
+        "rom": "281F1F6C6C16034A",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 2
+      },
+      {
+        "rom": "2833C2110A160372",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 3
+      },
+      {
+        "rom": "2842009E5D16033E",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 4
+      },
+      {
+        "rom": "28A401007F160347",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 5
+      },
+      {
+        "rom": "28C3B2A100160396",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 6
+      },
+      {
+        "rom": "28D0C1B23316033D",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 7
+      },
+      {
+        "rom": "28FF64851E160304",
+        "family": "0x28",
+        "family_name": "DS18B20",
+        "supported": true,
+        "point": 8
+      }
+    ]
+  },
+  "measurement": {
+    "mono_s": 7698,
+    "age_s": 714,
+    "epoch": 1795467374,
+    "presence": true,
+    "conversion_ms": 190,
+    "conversion_timeout": false,
+    "points": [
+      {
+        "point": 1,
+        "rom": "280DF0AD2B160337",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 16.88
+      },
+      {
+        "point": 2,
+        "rom": "281F1F6C6C16034A",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 16.69
+      },
+      {
+        "point": 3,
+        "rom": "2833C2110A160372",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 13.75
+      },
+      {
+        "point": 4,
+        "rom": "2842009E5D16033E",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 15.88
+      },
+      {
+        "point": 5,
+        "rom": "28A401007F160347",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 14.56
+      },
+      {
+        "point": 6,
+        "rom": "28C3B2A100160396",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 16.31
+      },
+      {
+        "point": 7,
+        "rom": "28D0C1B23316033D",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 15.31
+      },
+      {
+        "point": 8,
+        "rom": "28FF64851E160304",
+        "height_cm": null,
+        "status": "ok",
+        "temp_c": 12.81
+      }
+    ],
+    "unmapped": []
+  },
+  "buffer": {
+    "count": 3,
+    "capacity": 96,
+    "next_seq": 8,
+    "oldest_seq": 5,
+    "dropped_overflow": 0,
+    "dropped_no_time": 0,
+    "upload_ok": 1,
+    "upload_fail": 0,
+    "wake_count": 1,
+    "recovered_after_power_loss": true
+  },
+  "last_upload": {
+    "ok": true,
+    "diag_ok": true,
+    "http_status": 200,
+    "epoch": 1795464489,
+    "age_s": 3601,
+    "samples_sent": 4,
+    "samples_confirmed": 4,
+    "message": "4 sample(s) confirmed (seq 1..4)"
+  },
+  "errors": [
+    {
+      "age_s": 6486,
+      "text": "point 5 (28A401007F160347): crc_error"
+    }
+  ],
+  "ota": {
+    "state": "idle",
+    "received": 0,
+    "expected": 0,
+    "file": "",
+    "error": ""
+  },
+  "sim": {
+    "speed": 600,
+    "network_up": true,
+    "lost_response": false,
+    "http_posts": 2,
+    "mock_entries_main": 4,
+    "mock_entries_diag": 1,
+    "config_file": "pc-data/grainmeter-pc.conf",
+    "ota_slots": {
+      "running": "ota_0",
+      "pending_new_image": false,
+      "last_boot": ""
+    },
+    "probe": {
+      "shorted": false,
+      "devices": [
+        {
+          "index": 1,
+          "rom": "28FF64851E160304",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 12.8
+        },
+        {
+          "index": 2,
+          "rom": "2833C2110A160372",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 13.74
+        },
+        {
+          "index": 3,
+          "rom": "28A401007F160347",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 14.58
+        },
+        {
+          "index": 4,
+          "rom": "28D0C1B23316033D",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 15.29
+        },
+        {
+          "index": 5,
+          "rom": "2842009E5D16033E",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 15.87
+        },
+        {
+          "index": 6,
+          "rom": "28C3B2A100160396",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 16.32
+        },
+        {
+          "index": 7,
+          "rom": "281F1F6C6C16034A",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 16.66
+        },
+        {
+          "index": 8,
+          "rom": "280DF0AD2B160337",
+          "present": true,
+          "crc_faults": 0,
+          "temp_c": 16.9
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,75 @@
+# GrainMeter CI: PC build + CTest on Linux/Windows/macOS, Linux checks in the
+# project Docker image (clang-format, Valgrind), portal UI, and the ESP32-C6
+# firmware in the pinned ESP-IDF image. Same presets/scripts as locally;
+# no secrets are needed (no Wi-Fi or ThingSpeak credentials anywhere).
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pc:
+    name: PC ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure, build and test (cmake --workflow --preset ci)
+        run: cmake --workflow --preset ci
+
+  linux-checks:
+    name: Format + Valgrind (Docker)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: clang-format (Google style)
+        run: make format-check
+      - name: Tests under Valgrind memcheck
+        run: make valgrind
+
+  frontend:
+    name: Portal UI
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Lint, test and build
+        working-directory: frontend
+        run: npm ci && npm run verify
+      - name: Committed portal/ matches the sources
+        # index.html is byte-reproducible (pinned esbuild); the .gz must
+        # decompress to it (gzip bytes may differ between zlib versions).
+        run: |
+          git diff --exit-code -- portal/index.html
+          gzip -dc portal/index.html.gz | cmp - portal/index.html
+
+  firmware:
+    name: Firmware esp32c6 (ESP-IDF v6.1.1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build in espressif/idf:v6.1.1 and check OTA slot fit
+        run: scripts/build-firmware.sh build
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: grainmeter-firmware-esp32c6-${{ github.sha }}
+          path: |
+            firmware/dist/*-ota.bin
+            firmware/dist/flash/
+          if-no-files-found: error

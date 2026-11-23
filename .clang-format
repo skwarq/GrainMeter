@@ -1,0 +1,7 @@
+# Google C++ style (project-wide). Checked in CI with clang-format 18:
+#   scripts/clang-format.sh --dry-run
+---
+Language: Cpp
+BasedOnStyle: Google
+Standard: c++17
+---

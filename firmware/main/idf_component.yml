@@ -1,0 +1,3 @@
+# Only ESP-IDF itself; no registry components. Pinned to the CI image.
+dependencies:
+  idf: "6.1.1"
