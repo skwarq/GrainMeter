@@ -219,7 +219,8 @@ void PcDevice::writePlatformJson(gm::JsonWriter& w, bool detailed) {
   w.kv("battery_override_mv", static_cast<int64_t>(batteryOverrideMv_.load()))
       .kvu("service_requests", serviceRequests_.load())
       .kvu("time_syncs", net_.syncCount())
-      .kvu("http_sessions", http_.sessionCount());
+      .kvu("http_sessions", http_.sessionCount())
+      .kvb("tls", pcTlsEnabled());
   probe_.writeJson(w);
   (void)detailed;
   w.endObject();

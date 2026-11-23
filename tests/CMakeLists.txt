@@ -42,4 +42,5 @@ gm_add_test_binary(gm_integration_tests
   integration/test_portal.cpp
   integration/test_scenario.cpp
   integration/test_remote_update.cpp
+  integration/test_pc_tls.cpp
 )

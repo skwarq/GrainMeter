@@ -42,7 +42,8 @@ class SimNetwork : public gm::Network {
 // HTTP client for the simulator: mock://thingspeak goes to the in-process
 // MockThingSpeak, mock://updates/<file> serves files from <dataDir>/updates
 // (remote firmware update tests), http:// reaches a real local server
-// (e.g. gm_receiver) via cpp-httplib. https:// is refused on PC.
+// (e.g. gm_receiver) via cpp-httplib. https:// (real ThingSpeak, GitHub
+// releases) only in a GM_PC_TLS build, with certificate verification.
 class PcHttpClient : public gm::HttpClient {
  public:
   PcHttpClient(MockThingSpeak& mock, const std::string& updatesDir)
@@ -78,6 +79,9 @@ class PcHttpClient : public gm::HttpClient {
   std::atomic<unsigned> sessions_;
   std::string lastUrl_;
 };
+
+// True when built with GM_PC_TLS (https:// to real servers allowed).
+bool pcTlsEnabled();
 
 }  // namespace gmpc
 

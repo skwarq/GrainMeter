@@ -22,6 +22,12 @@
       "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "GM_WERROR": "ON" }
     },
     {
+      "name": "dev-tls",
+      "displayName": "Development with HTTPS in the simulator (OpenSSL)",
+      "inherits": "dev",
+      "cacheVariables": { "GM_PC_TLS": "ON", "GM_WERROR": "ON" }
+    },
+    {
       "name": "valgrind",
       "displayName": "Tests under Valgrind memcheck (Linux)",
       "inherits": "base",
@@ -33,7 +39,8 @@
   "buildPresets": [
     { "name": "dev", "configurePreset": "dev" },
     { "name": "ci", "configurePreset": "ci", "configuration": "Release" },
-    { "name": "valgrind", "configurePreset": "valgrind" }
+    { "name": "valgrind", "configurePreset": "valgrind" },
+    { "name": "dev-tls", "configurePreset": "dev-tls" }
   ],
   "testPresets": [
     {
@@ -48,6 +55,12 @@
       "configuration": "Release",
       "output": { "outputOnFailure": true },
       "execution": { "jobs": 4, "noTestsAction": "error" }
+    },
+    {
+      "name": "dev-tls",
+      "configurePreset": "dev-tls",
+      "output": { "outputOnFailure": true },
+      "execution": { "jobs": 8 }
     },
     {
       "name": "valgrind",
@@ -71,6 +84,14 @@
         { "type": "configure", "name": "ci" },
         { "type": "build", "name": "ci" },
         { "type": "test", "name": "ci" }
+      ]
+    },
+    {
+      "name": "dev-tls",
+      "steps": [
+        { "type": "configure", "name": "dev-tls" },
+        { "type": "build", "name": "dev-tls" },
+        { "type": "test", "name": "dev-tls" }
       ]
     },
     {

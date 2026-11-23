@@ -29,7 +29,7 @@ else
   IMAGE_DEP =
 endif
 
-.PHONY: all pc test run valgrind format format-check firmware frontend check ci clean dev-image help \
+.PHONY: all pc test test-tls run valgrind format format-check firmware frontend check ci clean dev-image help \
         flash flash-release monitor
 
 all: test
@@ -50,6 +50,10 @@ test: $(IMAGE_DEP)
 
 valgrind: $(IMAGE_DEP)
 	$(RUN) cmake --workflow --preset valgrind
+
+# Simulator with HTTPS (OpenSSL): can report to a real ThingSpeak channel.
+test-tls: $(IMAGE_DEP)
+	$(RUN) cmake --workflow --preset dev-tls
 
 format: $(IMAGE_DEP)
 	$(RUN) scripts/clang-format.sh
@@ -98,7 +102,7 @@ monitor:
 	docker run --rm -it --device $(DEVICE_PORT) $(IDF_PINNED) \
 		python -m serial.tools.miniterm --eol CR --raw $(DEVICE_PORT) 115200
 
-check: format-check test valgrind firmware
+check: format-check test test-tls valgrind firmware
 
 ci: check
 

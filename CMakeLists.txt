@@ -6,6 +6,7 @@ project(GrainMeter VERSION ${GM_VERSION} LANGUAGES CXX)
 option(GM_BUILD_PC "Build the PC simulator" ON)
 option(GM_BUILD_TESTS "Build unit and integration tests" ON)
 option(GM_WERROR "Treat warnings in own code as errors" OFF)
+option(GM_PC_TLS "PC simulator: HTTPS via OpenSSL (real ThingSpeak account)" OFF)
 
 include(cmake/Warnings.cmake)
 include(cmake/Dependencies.cmake)

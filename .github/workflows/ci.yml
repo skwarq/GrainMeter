@@ -29,7 +29,7 @@ jobs:
         run: cmake --workflow --preset ci
 
   linux-checks:
-    name: Format + Valgrind (Docker)
+    name: Format + Valgrind + TLS (Docker)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,6 +37,8 @@ jobs:
         run: make format-check
       - name: Tests under Valgrind memcheck
         run: make valgrind
+      - name: Simulator with HTTPS (OpenSSL)
+        run: make test-tls
 
   frontend:
     name: Portal UI

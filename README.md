@@ -88,7 +88,33 @@ Gdzie widać raporty:
 Prawdziwa ścieżka HTTP bez konta ThingSpeak: `build/dev/pc/gm_receiver --port 8090`
 i w symulatorze `set report_url http://127.0.0.1:8090`
 (odczyt: `curl http://127.0.0.1:8090/channels/1000001/feeds.json`).
-Na PC `https://` jest celowo odrzucane – domyślnie nic nie trafia na prawdziwe konto.
+
+**Symulator → prawdziwy kanał ThingSpeak (HTTPS).** Zwykły build nie obsługuje
+`https://`, więc domyślnie nic nie wychodzi na zewnątrz. Wariant z TLS
+(OpenSSL ≥ 3.0, np. `sudo apt install libssl-dev`; certyfikat i nazwa hosta
+są weryfikowane jak na ESP32):
+
+```bash
+cmake --workflow --preset dev-tls            # albo: make test-tls (Docker)
+build/dev-tls/pc/grainmeter_pc --speed 60 --data-dir pc-data
+```
+
+W konsoli symulatora (albo w portalu → Konfiguracja):
+
+```text
+set report_url https://api.thingspeak.com
+set ts_channel <Channel ID>
+set ts_key <Write API Key>
+set diag_channel <ID kanału diag>      # opcjonalnie
+set diag_key <Write API Key diag>
+upload
+```
+
+Dane trafiają tylko do pliku `pc-data/grainmeter-pc.conf` (poza
+repozytorium). Wracasz do lokalnego mocka poleceniem
+`set report_url mock://thingspeak`. Uwaga: przy `--speed 60` symulator robi
+pomiar co 15 s rzeczywistych, a wysyłkę co minutę. Darmowy ThingSpeak ma limit
+wiadomości, więc do dłuższych testów ustaw `--speed 1` albo dłuższe interwały.
 
 ## Symulacja awarii
 

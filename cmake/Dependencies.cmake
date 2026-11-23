@@ -3,8 +3,9 @@
 include(FetchContent)
 
 if(GM_BUILD_PC)
-  # cpp-httplib: single-header HTTP server/client (MIT). Header only, no TLS:
-  # the PC simulator only talks to local endpoints.
+  # cpp-httplib: single-header HTTP server/client (MIT). Header only. TLS is
+  # optional (GM_PC_TLS=ON, OpenSSL >= 3.0): by default the simulator only
+  # talks to local endpoints and nothing leaves the machine.
   FetchContent_Declare(httplib
     URL https://github.com/yhirose/cpp-httplib/archive/refs/tags/v0.67.0.tar.gz
     URL_HASH SHA256=be711ddaf7a3655d8f23aa5655709250b24d247aedd4b2629989d18b6164e5be
@@ -19,6 +20,14 @@ if(GM_BUILD_PC)
   target_link_libraries(httplib_header INTERFACE Threads::Threads)
   if(WIN32)
     target_link_libraries(httplib_header INTERFACE ws2_32 crypt32)
+  endif()
+  if(GM_PC_TLS)
+    find_package(OpenSSL 3.0 REQUIRED)
+    target_compile_definitions(httplib_header INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT GM_PC_TLS=1)
+    target_link_libraries(httplib_header INTERFACE OpenSSL::SSL OpenSSL::Crypto)
+    if(APPLE)
+      target_link_libraries(httplib_header INTERFACE "-framework CoreFoundation" "-framework Security")
+    endif()
   endif()
 endif()
 

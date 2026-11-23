@@ -48,6 +48,55 @@ const char* SimNetwork::stateText() {
 
 std::string PcHttpClient::lastUrl() { return lastUrl_; }
 
+namespace {
+
+// Splits "scheme://host[:port]/path". http:// always, https:// only in a
+// GM_PC_TLS build (OpenSSL, certificate + hostname verification on).
+bool networkUrl(const char* url, std::string* origin, std::string* path,
+                gm::HttpResult* res) {
+  const bool http = std::strncmp(url, "http://", 7) == 0;
+  const bool https = std::strncmp(url, "https://", 8) == 0;
+#if !defined(GM_PC_TLS)
+  if (https) {
+    std::snprintf(res->error, sizeof(res->error),
+                  "https needs a TLS build: cmake -DGM_PC_TLS=ON");
+    return false;
+  }
+#endif
+  if (!http && !https) {
+    std::snprintf(res->error, sizeof(res->error),
+                  "URL scheme not supported on PC");
+    return false;
+  }
+  const char* p = std::strchr(url + (https ? 8 : 7), '/');
+  *origin = std::string(
+      url, p != nullptr ? static_cast<size_t>(p - url) : std::strlen(url));
+  *path = p != nullptr ? p : "/";
+  return true;
+}
+
+void configureClient(httplib::Client& cli, uint32_t timeoutMs) {
+  const time_t secs = static_cast<time_t>(timeoutMs / 1000u);
+  cli.set_connection_timeout(secs, 0);
+  cli.set_read_timeout(secs, 0);
+  cli.set_write_timeout(secs, 0);
+  cli.set_follow_location(true);  // release downloads redirect
+#if defined(GM_PC_TLS)
+  cli.enable_server_certificate_verification(true);
+  cli.enable_server_hostname_verification(true);
+#endif
+}
+
+}  // namespace
+
+bool pcTlsEnabled() {
+#if defined(GM_PC_TLS)
+  return true;
+#else
+  return false;
+#endif
+}
+
 gm::HttpResult PcHttpClient::postJson(const char* url, const char* body,
                                       size_t len, uint32_t timeoutMs,
                                       char* resp, size_t respCap) {
@@ -64,19 +113,14 @@ gm::HttpResult PcHttpClient::postJson(const char* url, const char* body,
     const char* path = std::strchr(url + 7, '/');
     status = mock_.handle(path != nullptr ? path : "/", std::string(body, len),
                           &reply);
-  } else if (std::strncmp(url, "http://", 7) == 0) {
-    const char* hostStart = url + 7;
-    const char* path = std::strchr(hostStart, '/');
-    const std::string origin(url, path != nullptr
-                                      ? static_cast<size_t>(path - url)
-                                      : std::strlen(url));
+  } else {
+    std::string origin, path;
+    if (!networkUrl(url, &origin, &path, &res)) {
+      return res;
+    }
     httplib::Client cli(origin);
-    const time_t secs = static_cast<time_t>(timeoutMs / 1000u);
-    cli.set_connection_timeout(secs, 0);
-    cli.set_read_timeout(secs, 0);
-    cli.set_write_timeout(secs, 0);
-    auto r =
-        cli.Post(path != nullptr ? path : "/", body, len, "application/json");
+    configureClient(cli, timeoutMs);
+    auto r = cli.Post(path, body, len, "application/json");
     if (!r) {
       std::snprintf(res.error, sizeof(res.error), "%s",
                     httplib::to_string(r.error()).c_str());
@@ -84,10 +128,6 @@ gm::HttpResult PcHttpClient::postJson(const char* url, const char* body,
     }
     status = r->status;
     reply = r->body;
-  } else {
-    std::snprintf(res.error, sizeof(res.error),
-                  "URL scheme not supported on PC (use mock:// or http://)");
-    return res;
   }
 
   if (lostResponse_) {
@@ -132,27 +172,19 @@ bool PcHttpClient::readUpdateFile(const char* url, std::string* out,
   return true;
 }
 
-static void splitUrl(const char* url, std::string* origin, std::string* path) {
-  const char* p = std::strchr(url + 7, '/');
-  *origin = std::string(
-      url, p != nullptr ? static_cast<size_t>(p - url) : std::strlen(url));
-  *path = p != nullptr ? p : "/";
-}
-
 gm::HttpResult PcHttpClient::get(const char* url, uint32_t timeoutMs,
                                  char* resp, size_t respCap) {
   gm::HttpResult res = emptyResult();
   std::string body;
   if (std::strncmp(url, "mock://updates/", 15) == 0) {
     readUpdateFile(url, &body, &res);
-  } else if (std::strncmp(url, "http://", 7) == 0) {
+  } else {
     std::string origin, path;
-    splitUrl(url, &origin, &path);
+    if (!networkUrl(url, &origin, &path, &res)) {
+      return res;
+    }
     httplib::Client cli(origin);
-    const time_t secs = static_cast<time_t>(timeoutMs / 1000u);
-    cli.set_connection_timeout(secs, 0);
-    cli.set_read_timeout(secs, 0);
-    cli.set_follow_location(true);  // release downloads redirect
+    configureClient(cli, timeoutMs);
     auto r = cli.Get(path);
     if (!r) {
       std::snprintf(res.error, sizeof(res.error), "%s",
@@ -162,11 +194,6 @@ gm::HttpResult PcHttpClient::get(const char* url, uint32_t timeoutMs,
     res.transportOk = true;
     res.status = r->status;
     body = r->body;
-  } else {
-    std::snprintf(res.error, sizeof(res.error),
-                  "URL scheme not supported on PC (use mock://updates/ or "
-                  "http://)");
-    return res;
   }
   if (respCap > 0) {
     const size_t n = body.size() < respCap - 1 ? body.size() : respCap - 1;
@@ -196,17 +223,12 @@ gm::HttpResult PcHttpClient::download(const char* url, uint32_t timeoutMs,
     }
     return res;
   }
-  if (std::strncmp(url, "http://", 7) != 0) {
-    std::snprintf(res.error, sizeof(res.error), "URL scheme not supported");
+  std::string origin, path;
+  if (!networkUrl(url, &origin, &path, &res)) {
     return res;
   }
-  std::string origin, path;
-  splitUrl(url, &origin, &path);
   httplib::Client cli(origin);
-  const time_t secs = static_cast<time_t>(timeoutMs / 1000u);
-  cli.set_connection_timeout(secs, 0);
-  cli.set_read_timeout(secs, 0);
-  cli.set_follow_location(true);
+  configureClient(cli, timeoutMs);
   int httpStatus = -1;
   bool begun = false;
   auto r = cli.Get(
