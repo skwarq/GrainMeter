@@ -1,0 +1,318 @@
+/* Remote dashboard + shared history view. Colours of the 8 measuring points
+   (distinguishable in light and dark mode, also for common colour-vision
+   deficiencies). */
+:root {
+  --p1: #1f77b4;
+  --p2: #e8710a;
+  --p3: #2a9d4b;
+  --p4: #c03b8c;
+  --p5: #7a5bd6;
+  --p6: #8c564b;
+  --p7: #0aa5b5;
+  --p8: #b39a00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --p1: #6ab0f3;
+    --p2: #ffa45c;
+    --p3: #6fd38b;
+    --p4: #f28ac4;
+    --p5: #b39cff;
+    --p6: #d39b8e;
+    --p7: #5fd6e2;
+    --p8: #e6cf4f;
+  }
+}
+
+.dash {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 16px 16px 32px;
+  display: grid;
+  gap: 16px;
+}
+
+.dash-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dash-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.dash-title h1 {
+  margin: 0 0 2px;
+  font-size: 1.35rem;
+  line-height: 1.2;
+}
+
+.dash-time {
+  white-space: nowrap;
+}
+
+.dash-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dash-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 1100px) {
+  .dash-grid {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+  .dash-history {
+    grid-column: 1 / -1;
+    order: -1;
+  }
+}
+
+.dash-alerts {
+  margin: 0;
+  padding-left: 20px;
+  display: grid;
+  gap: 4px;
+}
+
+.dash-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.dash-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.8rem;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dash-table td {
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.dash-table .pt {
+  white-space: nowrap;
+}
+
+.dash-table .pt .dot {
+  margin-right: 6px;
+}
+
+.dash-table .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.dash-table th:not(:first-child) {
+  text-align: right;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  vertical-align: middle;
+  flex: none;
+}
+
+.text-danger {
+  color: var(--danger);
+}
+
+.spacer {
+  flex: 1;
+}
+
+/* range selector */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface-2);
+}
+
+.seg button {
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+
+.seg button.on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.chip.off {
+  opacity: 0.45;
+  text-decoration: line-through;
+}
+
+/* chart */
+.chart {
+  position: relative;
+}
+
+.chart-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: pan-y;
+}
+
+.chart-grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.chart-grid-v {
+  stroke-dasharray: 2 4;
+}
+
+.chart-tick {
+  font-size: 11px;
+  fill: var(--muted);
+}
+
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-cursor {
+  stroke: var(--muted);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.chart-dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.chart-tip {
+  position: absolute;
+  top: 8px;
+  transform: translateX(10px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 8px 10px;
+  font-size: 0.82rem;
+  pointer-events: none;
+  min-width: 150px;
+  z-index: 2;
+}
+
+.chart-tip.left {
+  transform: translateX(calc(-100% - 10px));
+}
+
+.chart-tip-time {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.chart-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.chart-tip-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+
+.chart-empty {
+  padding: 24px 0;
+  text-align: center;
+}
+
+/* setup */
+.dash-setup {
+  max-width: 760px;
+  margin: 0 auto;
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+
+.dash-setup-head {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.dash-setup-head h1 {
+  margin: 0;
+  font-size: 1.4rem;
+}
+
+.dash-setup-head p {
+  margin: 2px 0 0;
+}
+
+.dash-setup-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.dash-foot {
+  text-align: center;
+  padding-top: 8px;
+}
+
+.lang {
+  min-width: 44px;
+}

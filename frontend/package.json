@@ -11,11 +11,12 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "build": "node scripts/build.mjs",
+    "build:dashboard": "node scripts/build-dashboard.mjs",
     "test": "node --test test/",
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "verify": "npm run format:check && npm run lint && npm run test && npm run build",
+    "verify": "npm run format:check && npm run lint && npm run test && npm run build && npm run build:dashboard",
     "fake-ota": "node scripts/fake-ota.mjs"
   },
   "dependencies": {

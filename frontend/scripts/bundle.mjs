@@ -7,10 +7,10 @@ import path from 'node:path';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-export function esbuildOptions({ dev = false } = {}) {
+export function esbuildOptions({ dev = false, entry = 'src/main.jsx', define = {} } = {}) {
   return {
     absWorkingDir: ROOT,
-    entryPoints: ['src/main.jsx'],
+    entryPoints: [entry],
     bundle: true,
     write: false,
     outdir: 'out',
@@ -24,7 +24,7 @@ export function esbuildOptions({ dev = false } = {}) {
     sourcemap: dev ? 'inline' : false,
     legalComments: 'none',
     charset: 'utf8',
-    define: { 'process.env.NODE_ENV': dev ? '"development"' : '"production"' },
+    define: { 'process.env.NODE_ENV': dev ? '"development"' : '"production"', ...define },
     logLevel: 'warning',
   };
 }
@@ -34,11 +34,11 @@ export function escapeInline(code, tag) {
   return code.replace(new RegExp('</(' + tag + ')', 'gi'), '<\\/$1').replace(/<!--/g, '<\\!--');
 }
 
-export async function inlineHtml(outputFiles, { extraHead = '' } = {}) {
+export async function inlineHtml(outputFiles, { extraHead = '', template: tpl = 'src/index.html' } = {}) {
   const js = outputFiles.find((f) => f.path.endsWith('.js'));
   const css = outputFiles.find((f) => f.path.endsWith('.css'));
   if (!js) throw new Error('esbuild produced no JavaScript');
-  const template = await readFile(path.join(ROOT, 'src/index.html'), 'utf8');
+  const template = await readFile(path.join(ROOT, tpl), 'utf8');
   const style = css ? `<style>${escapeInline(css.text.trim(), 'style')}</style>` : '';
   const script = `<script>${escapeInline(js.text.trim(), 'script')}</script>`;
   // function replacers: "$" sequences in the bundle must not be interpreted

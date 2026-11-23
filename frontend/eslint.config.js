@@ -39,7 +39,9 @@ export default [
     },
   },
   {
-    files: ['src/api.js'],
+    // the device API and the dashboard's ThingSpeak reader are the only
+    // modules allowed to use the network
+    files: ['src/api.js', 'src/dashboard/thingspeak.js'],
     rules: { 'no-restricted-syntax': 'off' },
   },
   {
