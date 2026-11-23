@@ -167,10 +167,13 @@ TsOutcome tsParseResponse(bool transportOk, int status, const char* body) {
   if (!transportOk) {
     return TsOutcome::RetryLater;
   }
-  if (status == 200 && body != nullptr && bodyHasSuccessTrue(body)) {
+  // The documentation shows 200; the live API answers bulk writes with
+  // 202 Accepted. Either counts only together with {"success":true}.
+  const bool accepted = status == 200 || status == 202;
+  if (accepted && body != nullptr && bodyHasSuccessTrue(body)) {
     return TsOutcome::Confirmed;
   }
-  if (status == 429 || status >= 500 || status == 200) {
+  if (status == 429 || status >= 500 || accepted) {
     return TsOutcome::RetryLater;  // 200 without success:true is not a
                                    // confirmation
   }

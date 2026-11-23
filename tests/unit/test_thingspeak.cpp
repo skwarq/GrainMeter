@@ -118,7 +118,12 @@ TEST(ThingSpeak, ResponseClassification) {
   EXPECT_EQ(gm::tsParseResponse(true, 200, "{\"success\":false}"),
             gm::TsOutcome::RetryLater);
   EXPECT_EQ(gm::tsParseResponse(true, 200, "0"), gm::TsOutcome::RetryLater);
+  // api.thingspeak.com answers bulk writes with 202 Accepted
   EXPECT_EQ(gm::tsParseResponse(true, 202, "{\"success\":true}"),
+            gm::TsOutcome::Confirmed);
+  EXPECT_EQ(gm::tsParseResponse(true, 202, "{\"success\":false}"),
+            gm::TsOutcome::RetryLater);
+  EXPECT_EQ(gm::tsParseResponse(true, 201, "{\"success\":true}"),
             gm::TsOutcome::Rejected);
   EXPECT_EQ(gm::tsParseResponse(true, 429, ""), gm::TsOutcome::RetryLater);
   EXPECT_EQ(gm::tsParseResponse(true, 503, ""), gm::TsOutcome::RetryLater);

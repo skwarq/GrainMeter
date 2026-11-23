@@ -324,7 +324,9 @@ Zweryfikowane w dokumentacji MathWorks (bulk write JSON, kody błędów, cennik)
 
 - `POST https://api.thingspeak.com/channels/<id>/bulk_update.json`,
   `Content-Type: application/json`, body `{"write_api_key": "...", "updates": [...]}`.
-- Sukces: **HTTP 200 i `{"success":true}`** – tylko wtedy próbki są usuwane z bufora.
+- Sukces: **HTTP 200 lub 202 i `{"success":true}`** – tylko wtedy próbki są
+  usuwane z bufora. Dokumentacja pokazuje 200, ale działające API odpowiada na
+  zapis zbiorczy `202 Accepted` (sprawdzone na prawdziwym kanale).
   429 / 5xx / błąd transportu → ponowienie w następnym oknie; 400/401/402/413/422
   → błąd konfiguracji, próbki zostają (widoczne w portalu).
 - Maks. 960 wpisów na żądanie (licencja darmowa); ≥ 15 s między żądaniami

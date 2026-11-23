@@ -12,7 +12,8 @@ namespace gm {
 // ThingSpeak bulk write (JSON):
 //   POST <base>/channels/<id>/bulk_update.json, Content-Type application/json
 //   {"write_api_key":"...","updates":[{"created_at":"...","field1":..,"status":".."}]}
-// Success: HTTP 200 with {"success":true}. created_at must be unique within
+// Success: HTTP 200 or 202 (the live API answers 202 Accepted) with
+// {"success":true}. created_at must be unique within
 // the channel; entries whose timestamp already exists are rejected by the
 // server, which makes re-sending the same samples after a lost response
 // idempotent. Max 960 entries per request (free license); >= 15 s between
