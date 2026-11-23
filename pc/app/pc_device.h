@@ -11,6 +11,7 @@
 #include "app/portal.h"
 #include "app/shell.h"
 #include "platform/file_store.h"
+#include "platform/history_file.h"
 #include "sim/mock_thingspeak.h"
 #include "sim/sim_clock.h"
 #include "sim/sim_network.h"
@@ -90,6 +91,7 @@ class PcDevice : public gm::SystemPort {
   PcHttpClient http_;
   SimOtaTarget ota_;
   FileStore store_;
+  FileHistoryStorage history_;  // "flash" history, survives restarts
   gm::RetainedState retained_;  // "RTC memory"
   std::unique_ptr<gm::GrainMeter> app_;
   std::unique_ptr<gm::Portal> portal_;

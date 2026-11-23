@@ -8,6 +8,7 @@
 #include "app/config.h"
 #include "app/platform.h"
 #include "app/scheduler.h"
+#include "data/history_log.h"
 #include "data/measurement.h"
 #include "data/retained_state.h"
 #include "data/rommap.h"
@@ -48,6 +49,7 @@ struct Ports {
   HttpClient* http;
   SystemPort* sys;
   OtaTarget* ota;
+  HistoryStorage* history = nullptr;  // optional local history
 };
 
 // Application logic shared by the ESP32 firmware and the PC simulator.
@@ -92,6 +94,7 @@ class GrainMeter {
   const RomMap& romMap() const { return map_; }
   RetainedState& state() { return *st_; }
   OtaSession& ota() { return ota_; }
+  HistoryLog& history() { return history_; }
   const Ports& ports() const { return p_; }
 
   // Recent error messages (newest last), shown in portal and diagnostics.
@@ -136,6 +139,7 @@ class GrainMeter {
   bool stateRecovered_;
   PowerMode powerMode_;
   OtaSession ota_;
+  HistoryLog history_;
 
   enum { kErrorSlots = 8 };
   struct ErrorEntry {

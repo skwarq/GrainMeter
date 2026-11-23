@@ -185,3 +185,29 @@ test('latestDiag reads the diagnostic channel layout', () => {
   assert.equal(d.power, 'normal');
   assert.equal(latestDiag(parseFeed({ feeds: [] })), null);
 });
+
+test('parseHistoryBinary: device export -> same shape as ThingSpeak feeds', async () => {
+  const { parseHistoryBinary, segments, pointStats } = await import('../src/lib/feed.js');
+  const rows = 3;
+  const buf = new ArrayBuffer(8 + rows * 20);
+  const dv = new DataView(buf);
+  'GMH1'.split('').forEach((c, i) => dv.setUint8(i, c.charCodeAt(0)));
+  dv.setUint16(4, rows, true);
+  dv.setUint16(6, 8, true);
+  const base = Date.parse('2026-11-20T00:00:00Z') / 1000;
+  for (let k = 0; k < rows; k++) {
+    const o = 8 + k * 20;
+    dv.setUint32(o, base + (rows - 1 - k) * 900, true); // reverse order on purpose
+    for (let i = 0; i < 8; i++) dv.setInt16(o + 4 + 2 * i, i === 2 && k === 1 ? -32768 : 1000 + k * 10 + i, true);
+  }
+  const f = parseHistoryBinary(buf, [{ label: 'P1 (150 cm)', heightCm: 150 }]);
+  assert.equal(f.entries.length, 3);
+  assert.ok(f.entries[0].t < f.entries[2].t);
+  assert.equal(f.entries[2].values[0], 10); // first row (k=0) is the newest
+  assert.equal(f.entries[1].values[2], null); // missing, not 0
+  assert.equal(f.fields[0].heightCm, 150);
+  assert.equal(f.fields[1].heightCm, null);
+  assert.equal(pointStats(f, 0).count, 3);
+  assert.equal(segments(f, 2, 3600000).length, 2);
+  assert.throws(() => parseHistoryBinary(new ArrayBuffer(4)));
+});

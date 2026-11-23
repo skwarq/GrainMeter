@@ -1,10 +1,13 @@
 # GrainMeter partition table for the 4 MB in-package flash of ESP32-C6FH4
-# (FireBeetle 2 ESP32-C6, DFR1075). Two equal OTA slots for rollback.
+# (FireBeetle 2 ESP32-C6, DFR1075). Two equal OTA slots for rollback and a
+# local measurement history (~62 days at 15 min) for the offline portal.
 # Bootloader at 0x0 (ESP32-C6), partition table at 0x8000.
+# Changing this table needs a USB flash; OTA updates keep the old table.
 # Name,    Type, SubType,  Offset,   Size
 nvs,       data, nvs,      0x9000,   0x6000
 otadata,   data, ota,      0xF000,   0x2000
 phy_init,  data, phy,      0x11000,  0x1000
-ota_0,     app,  ota_0,    0x20000,  0x1E0000
-ota_1,     app,  ota_1,    0x200000, 0x1E0000
-coredump,  data, coredump, 0x3E0000, 0x10000
+ota_0,     app,  ota_0,    0x20000,  0x1D0000
+ota_1,     app,  ota_1,    0x1F0000, 0x1D0000
+coredump,  data, coredump, 0x3C0000, 0x10000
+history,   data, 0x40,     0x3D0000, 0x30000

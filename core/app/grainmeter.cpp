@@ -55,6 +55,9 @@ bool GrainMeter::begin() {
   }
   ++st_->wakeCount;
   st_->seal();
+  if (p_.history != nullptr && !history_.begin(p_.history)) {
+    recordError("history storage unusable; local history disabled");
+  }
   GM_LOGI(
       kTag, "GrainMeter %s on %s, %u point(s) mapped, %u sample(s) buffered",
       GM_FW_VERSION, p_.sys->platformName(), static_cast<unsigned>(map_.size()),
@@ -184,6 +187,11 @@ const MeasureReport& GrainMeter::measure(bool store) {
       }
       const uint32_t droppedBefore = st_->droppedOverflow;
       const Sample* stored = st_->push(s);
+      // Local history (portal charts without Internet) needs a wall clock.
+      if (s.epoch != 0 && history_.available() &&
+          !history_.append(s.epoch, s.centi, s.status)) {
+        recordError("history: flash write failed");
+      }
       if (st_->droppedOverflow != droppedBefore) {
         recordError("buffer full: oldest sample dropped (total %lu)",
                     static_cast<unsigned long>(st_->droppedOverflow));
@@ -881,6 +889,11 @@ void GrainMeter::writeStatus(JsonWriter& w) {
   writePower(w);
   writeRemoteUpdate(w);
   writeErrors(w);
+  w.key("history")
+      .beginObject()
+      .kvb("available", history_.available())
+      .kvu("capacity", history_.capacity())
+      .endObject();
   w.key("ota");
   ota_.writeJson(w);
   p_.sys->writePlatformJson(w, false);
@@ -919,6 +932,13 @@ void GrainMeter::writeDiag(JsonWriter& w) {
   writePower(w);
   writeRemoteUpdate(w);
   writeErrors(w);
+  w.key("history").beginObject().kvb("available", history_.available());
+  if (history_.available() && history_.forEach(0, 0, nullptr, nullptr)) {
+    w.kvu("records", history_.count())
+        .kvu("capacity", history_.capacity())
+        .kvu("oldest_epoch", history_.oldestEpoch());
+  }
+  w.endObject();
   w.key("ota");
   ota_.writeJson(w);
   p_.sys->writePlatformJson(w, true);

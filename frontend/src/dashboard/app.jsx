@@ -2,31 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { translate, DEFAULT_LANG, LANGS } from '../i18n/translate.js';
 import { I18nContext, tOr, useI18n } from '../components/i18n.js';
 import { Badge, Button, Card, KV, Loading, Logo } from '../components/ui.jsx';
+import { ALERT_DEFAULTS, AlertsCard, HistoryCard, PointTable } from '../components/History.jsx';
+import { LineChart } from '../components/LineChart.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
 import { batteryPercent } from '../lib/battery.js';
 import { formatDuration } from '../lib/format.js';
-import {
-  FIELD_COUNT,
-  RANGES,
-  alerts as findAlerts,
-  change24h,
-  gapThreshold,
-  hasData,
-  latestDiag,
-  latestPoints,
-  pointStats,
-  segments,
-} from '../lib/feed.js';
-import { formatTemp } from '../lib/temp.js';
+import { RANGES, alerts as findAlerts, gapThreshold, latestDiag, latestPoints, segments } from '../lib/feed.js';
 import { powerTone } from '../lib/power.js';
-import { LineChart } from './LineChart.jsx';
 import { Setup } from './Setup.jsx';
 import { clearSettings, loadSettings, saveSettings } from './settings.js';
 import { loadFeed } from './thingspeak.js';
 
 const REFRESH_MS = 5 * 60 * 1000;
 const LANG_KEY = 'gm.lang';
-const COLORS = Array.from({ length: FIELD_COUNT }, (_, i) => `var(--p${i + 1})`);
 
 function initialLang() {
   try {
@@ -38,23 +26,12 @@ function initialLang() {
   return navigator.language && navigator.language.startsWith('pl') ? 'pl' : DEFAULT_LANG;
 }
 
-function pointLabel(t, feed, i) {
-  const label = feed && feed.fields[i].label;
-  return label || t('dash.point', { n: i + 1 });
-}
-
-function signed(v, digits = 1) {
-  if (v === null || !Number.isFinite(v)) return '—';
-  return (v > 0 ? '+' : '') + v.toFixed(digits);
-}
-
 export function App() {
   const [lang, setLangState] = useState(initialLang);
   const [settings, setSettings] = useState(loadSettings);
   const [editing, setEditing] = useState(false);
   const [state, setState] = useState({ loading: false, main: null, diag: null, error: null, diagError: null });
   const [now, setNow] = useState(Date.now());
-  const [hidden, setHidden] = useState(() => new Set());
 
   const i18n = useMemo(
     () => ({
@@ -192,27 +169,7 @@ export function App() {
 
         {feed && (
           <>
-            {alerts.length > 0 && (
-              <Card title={t('dash.alertsNow', { n: alerts.length })} icon="warn" tone="danger">
-                <ul class="dash-alerts">
-                  {alerts.map((a, k) => (
-                    <li key={k}>
-                      {t('dash.alert.' + a.kind, {
-                        point: a.point ? pointLabel(t, feed, a.point - 1) : '',
-                        value:
-                          a.kind === 'stale'
-                            ? formatDuration(a.value * 60)
-                            : a.kind === 'sensor'
-                              ? tOr(t, 'status.', a.value)
-                              : a.kind === 'rising'
-                                ? signed(a.value)
-                                : formatTemp(a.value),
-                      })}
-                    </li>
-                  ))}
-                </ul>
-              </Card>
-            )}
+            <AlertsCard feed={feed} settings={{ ...ALERT_DEFAULTS, ...settings }} now={now} />
 
             {feed.entries.length === 0 ? (
               <Card>
@@ -226,67 +183,11 @@ export function App() {
                       <SiloView points={latestPoints(feed)} />
                       <TempLegend />
                     </div>
-                    <PointTable feed={feed} t={t} settings={settings} />
+                    <PointTable feed={feed} settings={settings} />
                   </div>
                 </Card>
 
-                <Card
-                  title={t('dash.history')}
-                  icon="diag"
-                  class="dash-history"
-                  actions={
-                    <div class="seg" role="tablist">
-                      {Object.keys(RANGES).map((r) => (
-                        <button
-                          key={r}
-                          type="button"
-                          role="tab"
-                          aria-selected={r === range}
-                          class={r === range ? 'on' : ''}
-                          onClick={() => store({ ...settings, range: r })}
-                        >
-                          {t('dash.range.' + r)}
-                        </button>
-                      ))}
-                    </div>
-                  }
-                >
-                  <div class="chips">
-                    {feed.fields.map((f, i) =>
-                      hasData(feed, i) ? (
-                        <button
-                          key={i}
-                          type="button"
-                          class={'chip' + (hidden.has(i) ? ' off' : '')}
-                          aria-pressed={!hidden.has(i)}
-                          onClick={() => {
-                            const n = new Set(hidden);
-                            if (n.has(i)) n.delete(i);
-                            else n.add(i);
-                            setHidden(n);
-                          }}
-                        >
-                          <span class="dot" style={{ background: COLORS[i] }} />
-                          {pointLabel(t, feed, i)}
-                        </button>
-                      ) : null,
-                    )}
-                  </div>
-                  <LineChart
-                    lang={lang}
-                    start={now - RANGES[range]}
-                    end={now}
-                    emptyText={t('dash.noData', { range: t('dash.range.' + range) })}
-                    series={feed.fields
-                      .map((f, i) => ({
-                        key: 'p' + i,
-                        label: pointLabel(t, feed, i),
-                        color: COLORS[i],
-                        segments: hasData(feed, i) && !hidden.has(i) ? segments(feed, i, gapThreshold(feed)) : [],
-                      }))
-                      .filter((s) => s.segments.length)}
-                  />
-                </Card>
+                <HistoryCard feed={feed} range={range} now={now} onRange={(r) => store({ ...settings, range: r })} />
 
                 {settings.diagChannelId && (
                   <DeviceCard diag={state.diag} error={state.diagError} t={t} lang={lang} now={now} range={range} />
@@ -310,55 +211,6 @@ function LangSwitch() {
     <button type="button" class="btn btn-sm btn-secondary lang" onClick={() => setLang(lang === 'pl' ? 'en' : 'pl')}>
       <span>{lang === 'pl' ? 'EN' : 'PL'}</span>
     </button>
-  );
-}
-
-function PointTable({ feed, t, settings }) {
-  return (
-    <table class="dash-table">
-      <thead>
-        <tr>
-          <th>{t('dash.colPoint')}</th>
-          <th>{t('dash.colNow')}</th>
-          <th>{t('dash.col24h')}</th>
-          <th>{t('dash.colMin')}</th>
-          <th>{t('dash.colMax')}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {feed.fields.map((f, i) => {
-          if (!hasData(feed, i)) return null;
-          const s = pointStats(feed, i);
-          const d = change24h(feed, i);
-          const p = latestPoints(feed)[i];
-          const rising = settings.risePerDay && d !== null && d >= settings.risePerDay;
-          const hot =
-            settings.maxTemp !== null &&
-            settings.maxTemp !== undefined &&
-            p.temp_c !== null &&
-            p.temp_c >= settings.maxTemp;
-          return (
-            <tr key={i}>
-              <td class="pt" title={f.label || t('dash.point', { n: i + 1 })}>
-                <span class="dot" style={{ background: COLORS[i] }} />
-                <b>{i + 1}</b>
-                {f.heightCm !== null && <span class="muted small"> {f.heightCm} cm</span>}
-              </td>
-              <td class={'num' + (hot ? ' text-danger' : '')}>
-                {p.temp_c !== null ? (
-                  formatTemp(p.temp_c)
-                ) : (
-                  <span class="text-danger">{tOr(t, 'status.', p.status)}</span>
-                )}
-              </td>
-              <td class={'num' + (rising ? ' text-danger' : '')}>{signed(d)}</td>
-              <td class="num">{formatTemp(s.min)}</td>
-              <td class="num">{formatTemp(s.max)}</td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
   );
 }
 

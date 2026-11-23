@@ -170,6 +170,41 @@ export const getDiag = (signal) => request('GET', '/api/diag', { signal });
 export const getConfig = (signal) => request('GET', '/api/config', { signal });
 export const getOta = (signal) => request('GET', '/api/ota', { signal });
 
+/** Local history from the device flash as an ArrayBuffer (lib/feed.js
+ *  parseHistoryBinary). range: '24h' | '7d' | '30d'. */
+export async function getHistory(range, signal) {
+  const ctrl = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ctrl.abort();
+  }, SLOW_TIMEOUT_MS);
+  const onOuterAbort = () => ctrl.abort();
+  if (signal) signal.addEventListener('abort', onOuterAbort, { once: true });
+  try {
+    let res;
+    try {
+      res = await fetch('/api/history/' + encodeURIComponent(range), {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        signal: ctrl.signal,
+      });
+    } catch {
+      if (timedOut) throw new ApiError('timeout');
+      if (signal && signal.aborted) throw new ApiError('aborted');
+      throw new ApiError('network');
+    }
+    if (!res.ok) {
+      const data = parseJson(await res.text());
+      throw new ApiError('http', res.status, data && typeof data.error === 'string' ? data.error : '');
+    }
+    return await res.arrayBuffer();
+  } finally {
+    clearTimeout(timer);
+    if (signal) signal.removeEventListener('abort', onOuterAbort);
+  }
+}
+
 // ---- actions (password) ----------------------------------------------------
 
 export const scan = () => post('/api/scan', null, SLOW_TIMEOUT_MS);

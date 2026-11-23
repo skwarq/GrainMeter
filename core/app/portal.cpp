@@ -86,6 +86,40 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
     reply(r, 200);
     return true;
   }
+  if (strcmp(req.method, "GET") == 0 &&
+      strncmp(req.path, "/api/history/", 13) == 0) {
+    // Compact binary history for the portal charts (see historyExport).
+    const char* range = req.path + 13;
+    uint32_t span = 0;
+    if (strcmp(range, "24h") == 0) span = 24u * 3600u;
+    if (strcmp(range, "7d") == 0) span = 7u * 24u * 3600u;
+    if (strcmp(range, "30d") == 0) span = 30u * 24u * 3600u;
+    if (span == 0) {
+      replyError(r, 404, "range: 24h, 7d or 30d");
+      return true;
+    }
+    if (!app_.history().available()) {
+      replyError(r, 503, "local history not available");
+      return true;
+    }
+    const uint32_t now =
+        app_.ports().clock->wallValid() ? app_.ports().clock->epoch() : 0;
+    size_t len = 0;
+    if (now != 0) {
+      len = historyExport(app_.history(), now > span ? now - span : 0, now,
+                          kHistoryMaxRows, reinterpret_cast<uint8_t*>(out_),
+                          sizeof(out_));
+    }
+    if (len == 0) {  // no clock yet or nothing stored: empty, valid export
+      memcpy(out_, "GMH1\0\0\x08\0", 8);
+      len = 8;
+    }
+    r->status = 200;
+    r->contentType = "application/octet-stream";
+    r->body = out_;
+    r->len = len;
+    return true;
+  }
   if (is(req, "GET", "/api/ota")) {
     JsonWriter w(out_, sizeof(out_));
     app_.ota().writeJson(w);

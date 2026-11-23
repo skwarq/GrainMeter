@@ -316,3 +316,7 @@
 .lang {
   min-width: 44px;
 }
+
+.dash-grid > .span-all {
+  grid-column: 1 / -1;
+}

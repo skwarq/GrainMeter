@@ -23,6 +23,8 @@ wirtualną sondą) i na **DFRobot FireBeetle 2 ESP32-C6 (DFR1075)**.
 - [Zdalna aktualizacja i podpisywanie obrazów](#zdalna-aktualizacja-i-podpisywanie-obrazów)
 - [Wydania i podpisywanie w CI](#wydania-i-podpisywanie-w-ci)
 - [Portal (frontend)](#portal-frontend)
+- [Dashboard z dowolnego miejsca (GitHub Pages)](#dashboard-z-dowolnego-miejsca-github-pages)
+- [Historia lokalna w urządzeniu](#historia-lokalna-w-urządzeniu)
 - [CI](#ci)
 - [Do potwierdzenia na sprzęcie](#do-potwierdzenia-na-sprzęcie)
 
@@ -143,7 +145,7 @@ błąd `network: AP 'SimulatedWiFi' not found (simulated outage)`, bufor rośnie
 
 ## Testy, formatowanie, Valgrind
 
-- `cmake --workflow --preset dev` – 106 testów GoogleTest (CTest).
+- `cmake --workflow --preset dev` – 114 testów GoogleTest (CTest).
   Jednostkowe: CRC/ROM, Search ROM na symulowanej magistrali, dekodowanie
   DS18B20 (tabela z datasheetu, 0,0 °C, brak, CRC, 85 °C power-on, zwarcie,
   rozdzielczości), trwałe mapowanie ROM (zapis + odczyt „po restarcie”),
@@ -182,10 +184,13 @@ Wynik w `firmware/dist/`:
   `flash_args.txt`.
 
 Skrypt sprawdza, czy aplikacja mieści się w **obu** slotach OTA (z binarnej
-tablicy partycji). Aktualnie: aplikacja 1 233 552 B, slot 1 966 080 B (37 % wolne).
+tablicy partycji). Aktualnie: aplikacja 1 244 448 B, slot 1 900 544 B (34 % wolne).
 
 Partycje (`firmware/partitions.csv`, flash 4 MB ESP32-C6FH4): `nvs` 24 KiB,
-`otadata`, `phy_init`, `ota_0` i `ota_1` po 1,875 MiB, `coredump` 64 KiB.
+`otadata`, `phy_init`, `ota_0` i `ota_1` po 1,81 MiB, `coredump` 64 KiB,
+`history` 192 KiB (historia lokalna). Tablicy partycji nie zmienia aktualizacja
+OTA: urządzenia wgrane wcześniej (v0.1.0/v0.1.1) działają dalej, ale historię
+lokalną dostaną dopiero po wgraniu przez USB (`make flash-release`).
 
 ### Pierwsze flashowanie przez USB
 
@@ -572,6 +577,48 @@ make frontend      # npm ci + verify (format, lint, testy, build) w node:26-alpi
 cd frontend && npm run dev   # http://127.0.0.1:5173/
 ```
 
+## Dashboard z dowolnego miejsca (GitHub Pages)
+
+Strona **<https://skwarq.github.io/GrainMeter/>** czyta dane prosto z
+ThingSpeak w przeglądarce, więc działa na telefonie i komputerze z każdego
+miejsca, bez własnego serwera. Pokazuje:
+
+- silos z aktualnymi temperaturami punktów i czasem ostatniego pomiaru,
+- historię wszystkich punktów (24 h / 7 dni / 30 dni) z wartościami po
+  najechaniu, przełączaniem punktów i przerwami tam, gdzie brak danych,
+- tabelę: teraz, zmiana w 24 h, min, max,
+- ostrzeżenia: temperatura alarmowa, wzrost na dobę (samozagrzewanie), błąd
+  czujnika, brak nowych danych,
+- stan urządzenia z kanału diagnostycznego (bateria, tryb zasilania, Wi-Fi,
+  bufor, nieudane wysyłki).
+
+Przy pierwszym wejściu podajesz **Channel ID** i **Read API Key** (klucz
+*odczytu* z zakładki API Keys – nie klucz zapisu) oraz opcjonalnie kanał
+diagnostyczny i progi ostrzeżeń. Dane zostają **tylko w tej przeglądarce**
+(localStorage); klucz trafia wyłącznie do `api.thingspeak.com`. Strona ma
+restrykcyjne CSP (skrypt i style dopuszczone tylko po skrócie SHA-256, sieć
+tylko do ThingSpeak). Na telefonie: menu przeglądarki → „Dodaj do ekranu
+głównego”. Odświeża się co 5 minut.
+
+Jednorazowo: GitHub → Settings → Pages → *Source: GitHub Actions*. Workflow
+`.github/workflows/pages.yml` publikuje stronę po każdej zmianie we
+`frontend/` na `main`. Lokalnie: `cd frontend && npm run build:dashboard`
+(wynik w `build/dashboard/`).
+
+## Historia lokalna w urządzeniu
+
+Przy silosie zwykle nie ma Internetu, więc urządzenie zapisuje każdy pomiar
+(z ważnym czasem) we własnej pamięci flash – partycja `history` 192 KiB,
+ok. 6000 pomiarów ≈ 62 dni przy 15 min. Zapis cykliczny po sektorach z CRC
+każdego rekordu (zapis przerwany utratą zasilania jest pomijany), każdy sektor
+kasowany raz na ~2 miesiące.
+
+Portal (tryb serwisowy lub symulator) ma zakładkę **Historia** z tym samym
+widokiem co dashboard: wykres, tabela, ostrzeżenia, silos na żywo. Dane:
+`GET /api/history/24h|7d|30d` (format binarny, maks. 720 wierszy – dla 30 dni
+uśrednione do godzin). Historia zaczyna się po pierwszej synchronizacji czasu
+(pierwsza udana wysyłka). W symulatorze jest w `pc-data/history.bin`.
+
 ## CI
 
 `.github/workflows/ci.yml` (push i pull request, `permissions: contents: read`,
@@ -584,6 +631,7 @@ bez sekretów, akcje przypięte do SHA):
 | Portal UI | `npm ci && npm run verify`, kontrola że `portal/` jest aktualny |
 | Firmware esp32c6 | `scripts/build-firmware.sh` w `espressif/idf:v6.1.1`, kontrola mieszczenia w slotach OTA, artefakt `grainmeter-firmware-esp32c6-<sha>` (plik OTA + pliki pierwszego flashowania) |
 | Release (tag `v*`) | podpisany firmware, manifest, GitHub Release – patrz wyżej |
+| Dashboard | test i build dashboardu, wdrożenie na GitHub Pages (push na `main`) |
 
 ## Do potwierdzenia na sprzęcie
 

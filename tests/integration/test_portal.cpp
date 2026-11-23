@@ -178,3 +178,26 @@ TEST_F(PortalTest, OtaRequiresPasswordAndCompleteUpload) {
   EXPECT_NE(cli->Get("/api/ota")->body.find("\"state\":\"failed\""),
             std::string::npos);
 }
+
+TEST_F(PortalTest, LocalHistoryForCharts) {
+  post("/api/automap", "");
+  // empty history (no clock yet) is a valid, empty export
+  auto r = cli->Get("/api/history/24h");
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 200);
+  EXPECT_EQ(r->get_header_value("Content-Type"), "application/octet-stream");
+  ASSERT_EQ(r->body.size(), 8u);
+  // one upload window sets the clock; later measurements go to history
+  t.runFor(3 * 3600, 300);
+  r = cli->Get("/api/history/24h");
+  ASSERT_TRUE(r);
+  ASSERT_GE(r->body.size(), 8u);
+  EXPECT_EQ(r->body.substr(0, 4), "GMH1");
+  const size_t rows = static_cast<uint8_t>(r->body[4]) |
+                      (static_cast<uint8_t>(r->body[5]) << 8);
+  EXPECT_GE(rows, 8u);  // ~3 h at 15 min after the first sync
+  EXPECT_EQ(r->body.size(), 8u + rows * 20u);
+  EXPECT_EQ(cli->Get("/api/history/1y")->status, 404);
+  EXPECT_NE(cli->Get("/api/diag")->body.find("\"records\":"),
+            std::string::npos);
+}

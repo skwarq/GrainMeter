@@ -431,4 +431,10 @@ export default {
   'dash.dropped': 'Utracone próbki',
   'dash.uploadFailures': 'Nieudane wysyłki',
   'dash.diagAge': 'Ostatni raport',
+  'nav.history': 'Historia',
+  'hist.sub': 'Temperatury zapisane w urządzeniu – działa bez Internetu',
+  'hist.unavailable':
+    'Historia lokalna niedostępna: urządzenie ma starszą tablicę partycji. Wgraj firmware przez USB (make flash-release), aby ją włączyć.',
+  'hist.noClock':
+    'Historia zacznie się zapisywać po pierwszej synchronizacji czasu (pierwsza udana wysyłka przez Wi-Fi).',
 };

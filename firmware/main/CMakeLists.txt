@@ -10,6 +10,7 @@ idf_component_register(
     platform/https_client.cpp
     platform/esp_ota_target.cpp
     platform/esp_system_port.cpp
+    platform/history_partition.cpp
     service/dns_redirect.cpp
     service/web_portal.cpp
     service/usb_console.cpp

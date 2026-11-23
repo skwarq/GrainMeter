@@ -35,6 +35,7 @@ gm_add_test_binary(gm_unit_tests
   unit/test_json_form.cpp
   unit/test_dns_reply.cpp
   unit/test_remote_update.cpp
+  unit/test_history_log.cpp
 )
 
 gm_add_test_binary(gm_integration_tests

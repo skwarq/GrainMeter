@@ -7,6 +7,7 @@ add_library(gm_pcsim STATIC
   sim/sim_ota.cpp
   platform/file_store.cpp
   platform/web_server.cpp
+  platform/history_file.cpp
   app/pc_device.cpp
 )
 target_include_directories(gm_pcsim PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})

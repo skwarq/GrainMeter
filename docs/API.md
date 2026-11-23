@@ -27,6 +27,7 @@ both platforms answer identically. Sample responses: `docs/api-samples/`.
 | GET | `/api/diag` | full diagnostics: status + `config`, `rom_map`, `scan` |
 | GET | `/api/config` | configuration without secrets |
 | GET | `/api/ota` | state of the current/last firmware upload |
+| GET | `/api/history/24h`, `/7d`, `/30d` | local history (binary, below) |
 
 ### `/api/status` fields
 
@@ -80,6 +81,16 @@ Sensor `status` values: `ok`, `missing`, `crc_error`, `unsupported_family`,
 `battery_override_mv` (0 = simulated curve), `service_requests`,
 `time_syncs`, `http_sessions`,
 `probe{shorted, devices[{index, rom, present, crc_faults, temp_c}]}`.
+
+### `/api/history/<range>` (binary)
+
+`application/octet-stream`, little endian. Header: `"GMH1"`, `uint16 rows`,
+`uint16 points` (8). Then `rows` x 20 bytes: `uint32 epoch` (UTC s) and
+`int16 centi[8]` (°C x 100, `-32768` = no value). At most 720 rows: longer
+ranges are averaged into equal time buckets. Empty history or no valid clock:
+header only. `503` when the device has no `history` partition (older
+partition table). `/api/status` has `history{available, capacity}`,
+`/api/diag` adds `records` and `oldest_epoch`.
 
 ## Actions (POST, password required)
 

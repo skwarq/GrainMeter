@@ -13,6 +13,7 @@ set(GM_CORE_SOURCES
   ${GM_CORE_DIR}/onewire/ds18b20.cpp
   ${GM_CORE_DIR}/data/rommap.cpp
   ${GM_CORE_DIR}/data/retained_state.cpp
+  ${GM_CORE_DIR}/data/history_log.cpp
   ${GM_CORE_DIR}/comm/thingspeak.cpp
   ${GM_CORE_DIR}/comm/dns_reply.cpp
   ${GM_CORE_DIR}/app/config.cpp

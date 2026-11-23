@@ -24,6 +24,7 @@ PcDevice::PcDevice(const Options& opt)
       ota_(opt.dataDir),
       store_(opt.configPath.empty() ? opt.dataDir + "/grainmeter-pc.conf"
                                     : opt.configPath),
+      history_(opt.dataDir + "/history.bin"),
       restartPending_(false),
       wakeReason_("power-on"),
       resetReason_("power-on") {
@@ -86,6 +87,7 @@ bool PcDevice::start(std::string* error) {
   ports.http = &http_;
   ports.sys = this;
   ports.ota = &ota_;
+  ports.history = &history_;
   gm::ConfigLimits limits;
   limits.minMeasureS = 5;
   limits.allowInsecureUrl = true;

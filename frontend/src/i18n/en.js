@@ -431,4 +431,9 @@ export default {
   'dash.dropped': 'Dropped samples',
   'dash.uploadFailures': 'Failed uploads',
   'dash.diagAge': 'Last report',
+  'nav.history': 'History',
+  'hist.sub': 'Temperatures stored in the device – works without Internet',
+  'hist.unavailable':
+    'Local history unavailable: the device has an older partition table. Flash the firmware over USB (make flash-release) to enable it.',
+  'hist.noClock': 'The history starts recording after the first time sync (first successful upload over Wi-Fi).',
 };

@@ -37,7 +37,7 @@ class SimOtaTarget : public gm::OtaTarget {
   void setFailWrites(bool on) { failWrites_ = on; }
 
   // Same as firmware/partitions.csv (ota_0 / ota_1 size).
-  static const size_t kSlotSize = 0x1E0000;
+  static const size_t kSlotSize = 0x1D0000;
 
  private:
   std::string dataDir_;

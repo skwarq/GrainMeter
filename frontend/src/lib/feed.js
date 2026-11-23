@@ -301,3 +301,40 @@ export function latestDiag(feed) {
     power: e.kv.power || null,
   };
 }
+
+/**
+ * Local history exported by the device (GET /api/history/<range>):
+ * "GMH1", uint16 rows, uint16 points, then rows of uint32 epoch +
+ * int16 centi[8] (INT16_MIN = missing). Returns the same shape as
+ * parseFeed() so every helper above works for both sources.
+ * fields: [{label, heightCm}] for the 8 points (from /api/status).
+ */
+export function parseHistoryBinary(buffer, fields = [], name = '') {
+  const dv = new DataView(buffer);
+  if (
+    dv.byteLength < 8 ||
+    String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)) !== 'GMH1'
+  ) {
+    throw new Error('bad history format');
+  }
+  const rows = dv.getUint16(4, true);
+  const points = dv.getUint16(6, true);
+  if (points !== FIELD_COUNT || dv.byteLength < 8 + rows * 20) throw new Error('bad history format');
+  const entries = [];
+  for (let k = 0; k < rows; k++) {
+    const o = 8 + k * 20;
+    const values = [];
+    for (let i = 0; i < FIELD_COUNT; i++) {
+      const c = dv.getInt16(o + 4 + 2 * i, true);
+      values.push(c === -32768 ? null : c / 100);
+    }
+    entries.push({ t: dv.getUint32(o, true) * 1000, values, errors: {}, kv: {} });
+  }
+  entries.sort((a, b) => a.t - b.t);
+  const f = [];
+  for (let i = 0; i < FIELD_COUNT; i++) {
+    const src = fields[i] || {};
+    f.push({ index: i + 1, label: src.label || '', heightCm: src.heightCm === undefined ? null : src.heightCm });
+  }
+  return { name, fields: f, entries };
+}

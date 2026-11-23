@@ -35,6 +35,8 @@ struct PortalReply {
 };
 
 enum { kPortalMaxBody = 2048 };
+// 720 rows x 20 B + header = 14.4 KiB, fits the reply buffer below.
+enum { kHistoryMaxRows = 720 };
 
 // How the OTA request body reaches Portal::otaFeed():
 //  Raw         - the image itself (application/octet-stream), exact length

@@ -229,6 +229,7 @@ extern "C" void app_main(void) {
   ports.http = &d.http;
   ports.sys = &d.sys;
   ports.ota = &d.ota;
+  ports.history = d.history.open() ? &d.history : nullptr;
   gm::ConfigLimits limits;
   limits.minMeasureS = 60;
   limits.allowInsecureUrl = false;  // ThingSpeak only over verified HTTPS

@@ -9,6 +9,7 @@
 #include "platform/esp_clock.h"
 #include "platform/esp_ota_target.h"
 #include "platform/esp_system_port.h"
+#include "platform/history_partition.h"
 #include "platform/https_client.h"
 #include "platform/nvs_store.h"
 #include "platform/wifi_link.h"
@@ -24,6 +25,7 @@ struct Device {
   HttpsClient http;
   EspOtaTarget ota;
   EspSystemPort sys;
+  HistoryPartition history;
   gm::GrainMeter* app = nullptr;
   gm::Portal* portal = nullptr;
   SemaphoreHandle_t lock = nullptr;

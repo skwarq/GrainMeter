@@ -7,6 +7,7 @@ import { StatusContext, usePoll, useHashRoute } from './components/hooks.js';
 import { Icon, Logo } from './components/ui.jsx';
 import { UnlockDialog } from './components/UnlockDialog.jsx';
 import { Overview } from './pages/Overview.jsx';
+import { History } from './pages/History.jsx';
 import { Sensors } from './pages/Sensors.jsx';
 import { Config } from './pages/Config.jsx';
 import { Upload } from './pages/Upload.jsx';
@@ -20,6 +21,7 @@ const LANG_KEY = 'gm.lang';
 
 const PAGES = [
   { id: 'overview', icon: 'overview', comp: Overview },
+  { id: 'history', icon: 'clock', comp: History },
   { id: 'sensors', icon: 'sensors', comp: Sensors },
   { id: 'config', icon: 'config', comp: Config },
   { id: 'upload', icon: 'upload', comp: Upload },
