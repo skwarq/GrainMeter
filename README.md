@@ -163,18 +163,37 @@ Partycje (`firmware/partitions.csv`, flash 4 MB ESP32-C6FH4): `nvs` 24 KiB,
 
 ### Pierwsze flashowanie przez USB
 
-FireBeetle podłączony kablem USB-C (natywny USB Serial/JTAG, sterownik nie jest potrzebny):
+FireBeetle podłączony kablem USB-C (natywny USB Serial/JTAG, sterownik nie
+jest potrzebny). Wystarczy Docker – esptool działa w przypiętym obrazie ESP-IDF:
 
 ```bash
-cd firmware/dist/flash
-python -m esptool --chip esp32c6 -p /dev/ttyACM0 -b 460800 write-flash \
-  --flash-mode dio --flash-size 4MB --flash-freq 80m \
-  0x0 bootloader.bin 0x8000 partition-table.bin 0xF000 ota_data_initial.bin 0x20000 grainmeter.bin
-# lub z drzewa źródeł: scripts/build-firmware.sh "-p /dev/ttyACM0 flash monitor" (Docker: dodaj --device)
+make flash-release                  # najnowsza wersja z pliku VERSION z GitHub Releases
+make flash-release RELEASE=v0.1.0   # konkretne wydanie
+make flash                          # lokalny build (firmware/dist, po: make firmware)
+make monitor                        # konsola USB (wyjście: Ctrl+])
 ```
 
-Jeśli port nie odpowiada: przytrzymaj BOOT, naciśnij RST, puść BOOT (tryb pobierania ROM).
-Windows: port `COMx`, macOS: `/dev/cu.usbmodem*`.
+`make flash-release` pobiera paczkę z wydania i sprawdza `SHA256SUMS`. Potem
+sprawdza, czy paczka zawiera ten sam obraz co plik OTA, oraz **podpis obrazu
+kluczem `firmware/signing_pubkey.pem`**. Dopiero wtedy czyści flash i wgrywa
+bootloader, tablicę partycji, `ota_data_initial.bin` i aplikację.
+
+Opcje: `DEVICE_PORT=/dev/ttyACM1` (domyślnie `/dev/ttyACM0`), `ERASE=0` (bez
+czyszczenia – zostaje konfiguracja w NVS). Skrypt bezpośrednio:
+`scripts/flash.sh release v0.1.0`, `scripts/flash.sh local`.
+
+Ręcznie (np. Windows, port `COMx`): rozpakuj
+`grainmeter-X.Y.Z-esp32c6-flash.zip` i wykonaj
+
+```bash
+python -m esptool --chip esp32c6 -p /dev/ttyACM0 erase-flash
+python -m esptool --chip esp32c6 -p /dev/ttyACM0 -b 460800 write-flash \
+  --flash-mode dio --flash-size keep --flash-freq 80m \
+  0x0 bootloader.bin 0x8000 partition-table.bin 0xf000 ota_data_initial.bin 0x20000 grainmeter.bin
+```
+
+Jeśli port nie odpowiada: przytrzymaj BOOT, naciśnij RST, puść BOOT (tryb
+pobierania ROM), po wgraniu naciśnij RST.
 
 ### Płytka – użyte piny (schemat DFR1075 V1.0/V1.1)
 

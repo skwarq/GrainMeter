@@ -8,6 +8,10 @@
 #   make firmware   ESP32-C6 firmware in espressif/idf:v6.1.1 -> firmware/dist/
 #   make frontend   portal UI (frontend/) -> portal/index.html(.gz)
 #   make format     clang-format (Google style) in place
+#   make flash-release [RELEASE=v0.1.0] [DEVICE_PORT=/dev/ttyACM0] [ERASE=0]
+#                   first USB flash from a GitHub release (checksums + signature)
+#   make flash      first USB flash of the local build (firmware/dist)
+#   make monitor    USB console of the board
 
 USE_DOCKER ?= 1
 DEV_IMAGE  ?= grainmeter-dev:$(shell sha1sum docker/dev.Dockerfile | cut -c1-12)
@@ -25,12 +29,13 @@ else
   IMAGE_DEP =
 endif
 
-.PHONY: all pc test run valgrind format format-check firmware frontend check ci clean dev-image help
+.PHONY: all pc test run valgrind format format-check firmware frontend check ci clean dev-image help \
+        flash flash-release monitor
 
 all: test
 
 help:
-	@sed -n '1,13p' Makefile
+	@sed -n '1,17p' Makefile
 
 dev-image:
 	@docker image inspect $(DEV_IMAGE) >/dev/null 2>&1 || \
@@ -75,6 +80,23 @@ endif
 frontend:
 	docker run --rm -v "$(CURDIR):$(CURDIR)" -w "$(CURDIR)/frontend" -u "$$(id -u):$$(id -g)" \
 		-e HOME=/tmp -e npm_config_cache=/tmp/.npm $(NODE_IMAGE) sh -c "npm ci && npm run verify"
+
+# --- board (USB) ------------------------------------------------------------
+DEVICE_PORT ?= /dev/ttyACM0
+RELEASE     ?=
+ERASE       ?= 1
+IDF_PINNED  := espressif/idf:v6.1.1@sha256:2b4f966c37eaedc19542b0637a5f850b2eff9478d8e858192aa0073d92c2dc91
+
+flash-release:
+	PORT=$(DEVICE_PORT) ERASE=$(ERASE) scripts/flash.sh release $(RELEASE)
+
+flash:
+	PORT=$(DEVICE_PORT) ERASE=$(ERASE) scripts/flash.sh local
+
+monitor:
+	@test -e $(DEVICE_PORT) || { echo "$(DEVICE_PORT) not found"; exit 1; }
+	docker run --rm -it --device $(DEVICE_PORT) $(IDF_PINNED) \
+		python -m serial.tools.miniterm --eol CR --raw $(DEVICE_PORT) 115200
 
 check: format-check test valgrind firmware
 
