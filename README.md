@@ -213,6 +213,11 @@ DFRobot podaje pobór w deep sleep 16 µA (V1.0) i 36 µA (V1.2) – do pomiaru.
 
 ## Sonda STW-100 – podłączenie
 
+Pełny schemat (sonda, przycisk serwisowy, panel, akumulator), lista części i
+procedura pierwszego uruchomienia: **[docs/wiring.md](docs/wiring.md)**.
+
+![Schemat podłączenia](docs/wiring.svg)
+
 Żeńskie gniazdo panelowe Hirschmann CA 3 GD:
 
 | Pin | Kolor | GrainMeter |
