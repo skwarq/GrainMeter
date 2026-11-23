@@ -25,7 +25,7 @@ function xTicks(start, end, lang) {
  * Time series chart in plain SVG. series: [{key, label, color, segments}]
  * where segments come from lib/feed.js segments() (gaps = missing data).
  */
-export function LineChart({ series, start, end, height = 300, unit = '°C', digits = 1, lang, emptyText }) {
+export function LineChart({ series, start, end, height = 300, unit = '°C', digits = 1, lang, emptyText, domain }) {
   const H = height;
   const ref = useRef(null);
   const box = useRef(null);
@@ -55,9 +55,15 @@ export function LineChart({ series, start, end, height = 300, unit = '°C', digi
 
   let yMin = Math.min(...values);
   let yMax = Math.max(...values);
-  const pad = Math.max(0.5, (yMax - yMin) * 0.08);
-  yMin -= pad;
-  yMax += pad;
+  if (domain) {
+    // fixed scale (e.g. 0-100 %), widened only if data falls outside
+    yMin = Math.min(yMin, domain[0]);
+    yMax = Math.max(yMax, domain[1]);
+  } else {
+    const pad = Math.max(0.5, (yMax - yMin) * 0.08);
+    yMin -= pad;
+    yMax += pad;
+  }
   const ticks = niceTicks(yMin, yMax, 5);
   yMin = Math.min(yMin, ticks[0]);
   yMax = Math.max(yMax, ticks[ticks.length - 1]);

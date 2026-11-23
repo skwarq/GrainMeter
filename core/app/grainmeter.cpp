@@ -166,6 +166,10 @@ const MeasureReport& GrainMeter::measure(bool store) {
   haveMeasure_ = true;
 
   if (store) {
+    // Previous measurement (for the local history's plateau end); none
+    // after a power-up -> the history marks a restart.
+    const bool hadPrev = st_->hasMeasured != 0;
+    const uint32_t prevMono = st_->lastMeasureMonoS;
     st_->hasMeasured = 1;
     st_->lastMeasureMonoS = m.monoS;
     if (map_.size() == 0) {
@@ -188,9 +192,17 @@ const MeasureReport& GrainMeter::measure(bool store) {
       const uint32_t droppedBefore = st_->droppedOverflow;
       const Sample* stored = st_->push(s);
       // Local history (portal charts without Internet) needs a wall clock.
-      if (s.epoch != 0 && history_.available() &&
-          !history_.append(s.epoch, s.centi, s.status)) {
-        recordError("history: flash write failed");
+      if (s.epoch != 0 && history_.available()) {
+        HistoryRecord hr = historyRecord(s, false);
+        uint32_t prevEpoch = 0;
+        if (!hadPrev) {
+          hr.flags |= kHistRestart;
+        } else if (m.monoS > prevMono && m.monoS - prevMono < s.epoch) {
+          prevEpoch = s.epoch - (m.monoS - prevMono);
+        }
+        if (!history_.append(hr, prevEpoch)) {
+          recordError("history: flash write failed");
+        }
       }
       if (st_->droppedOverflow != droppedBefore) {
         recordError("buffer full: oldest sample dropped (total %lu)",
@@ -210,11 +222,44 @@ const MeasureReport& GrainMeter::measure(bool store) {
 // Gives every buffered sample a fixed, unique UTC timestamp once the wall
 // clock is known. Stored stamps make retries byte-identical, so ThingSpeak
 // rejects already stored entries by created_at instead of duplicating them.
+HistoryRecord GrainMeter::historyRecord(const Sample& s, bool reconstructed) {
+  HistoryRecord r;
+  memset(&r, 0, sizeof(r));
+  r.epoch = s.epoch;
+  memcpy(r.centi, s.centi, sizeof(r.centi));
+  memcpy(r.status, s.status, sizeof(r.status));
+  for (int i = 0; i < kMaxPoints; ++i) {
+    if (r.status[i] != static_cast<uint8_t>(ReadStatus::Ok)) {
+      r.centi[i] = kHistoryMissing;
+    }
+  }
+  if (reconstructed) {
+    // device state at capture time is unknown for backfilled samples
+    r.flags = 3 | kHistReconstructed;
+    return r;
+  }
+  const int mv = p_.sys->batteryMv();
+  r.batteryMv = mv > 0 && mv < 65535 ? static_cast<uint16_t>(mv) : 0;
+  r.rssi = st_->lastRssi;
+  const LastUpload& L = st_->last;
+  const uint8_t up = !L.attempted ? 0 : (L.ok ? 1 : 2);
+  r.flags = static_cast<uint8_t>(static_cast<uint8_t>(powerMode_) |
+                                 (up << kHistUploadShift));
+  return r;
+}
+
 void GrainMeter::stampSampleTimes(uint32_t nowEpoch, uint32_t nowMono) {
+  // Samples measured before the clock was known were not written to the
+  // local history; they are added once their time is reconstructed.
+  uint32_t fresh[kBufferCapacity];
+  size_t freshCount = 0;
   for (size_t i = st_->count; i > 0; --i) {
     Sample& s = st_->at(i - 1);
     if (s.epoch == 0) {
       s.epoch = tsSampleEpoch(s, nowEpoch, nowMono);
+      if (s.epoch != 0 && freshCount < kBufferCapacity) {
+        fresh[freshCount++] = s.seq;
+      }
     }
     if (s.epoch == 0) {
       st_->removeAt(i - 1);  // RTC restarted before time was known
@@ -230,6 +275,28 @@ void GrainMeter::stampSampleTimes(uint32_t nowEpoch, uint32_t nowMono) {
     prev = s.epoch;
   }
   st_->seal();
+  if (freshCount == 0 || !history_.available()) {
+    return;
+  }
+  // Samples without a clock exist only after a power-up: the first one
+  // starts a new line in the history.
+  uint32_t prevEpoch = 0;
+  bool failed = false;
+  for (size_t i = 0; i < st_->count; ++i) {  // oldest first
+    const Sample& s = st_->at(i);
+    for (size_t k = 0; k < freshCount; ++k) {
+      if (fresh[k] == s.seq) {
+        HistoryRecord hr = historyRecord(s, true);
+        if (prevEpoch == 0) hr.flags |= kHistRestart;
+        if (!history_.append(hr, prevEpoch) && !failed) {
+          failed = true;
+          recordError("history: flash write failed");
+        }
+        prevEpoch = s.epoch;
+        break;
+      }
+    }
+  }
 }
 
 void GrainMeter::finishUpload(bool ok, int status, const char* msg) {
@@ -260,7 +327,15 @@ const LastUpload& GrainMeter::upload() {
     return L;
   }
   char err[64];
-  if (!p_.net->connect(cfg_, kWifiConnectTimeoutMs, err, sizeof(err))) {
+  const bool connected =
+      p_.net->connect(cfg_, kWifiConnectTimeoutMs, err, sizeof(err));
+  if (connected) {
+    const int rssi = p_.net->rssi();  // radio is on only in upload windows
+    st_->lastRssi = static_cast<int8_t>(rssi < -127 ? -127
+                                        : rssi > 0  ? 0
+                                                    : rssi);
+  }
+  if (!connected) {
     ++st_->uploadFailCount;
     char msg[96];
     snprintf(msg, sizeof(msg), "network: %s", err);
@@ -889,14 +964,45 @@ void GrainMeter::writeStatus(JsonWriter& w) {
   writePower(w);
   writeRemoteUpdate(w);
   writeErrors(w);
-  w.key("history")
-      .beginObject()
-      .kvb("available", history_.available())
-      .kvu("capacity", history_.capacity())
-      .endObject();
+  w.key("history").beginObject().kvb("available", history_.available());
+  w.endObject();
   w.key("ota");
   ota_.writeJson(w);
   p_.sys->writePlatformJson(w, false);
+  w.endObject();
+}
+
+uint32_t GrainMeter::lastMeasureEpoch() const {
+  if (!st_->hasMeasured || !p_.clock->wallValid()) return 0;
+  const uint32_t mono = p_.clock->monoS();
+  const uint32_t now = p_.clock->epoch();
+  const uint32_t ago =
+      mono >= st_->lastMeasureMonoS ? mono - st_->lastMeasureMonoS : 0;
+  return ago < now ? now - ago : 0;
+}
+
+uint32_t GrainMeter::historyMaxGapS() const {
+  // Longest interval the scheduler uses (critical power mode), two of them,
+  // plus a margin for wake-up jitter.
+  const uint32_t interval = cfg_.measureIntervalS * kCriticalMeasureFactor;
+  return history_.policy().heartbeatS + 2 * interval + 60;
+}
+
+void GrainMeter::writeHistoryInfo(JsonWriter& w) {
+  w.beginObject().kvb("available", history_.available());
+  HistoryStats hs;
+  if (history_.available() && history_.stats(&hs)) {
+    const HistoryPolicy& pol = history_.policy();
+    w.kvu("records", hs.records)
+        .kvu("used_bytes", hs.usedBytes)
+        .kvu("capacity_bytes", hs.capacityBytes)
+        .kvu("oldest_epoch", hs.oldestEpoch)
+        .kvu("newest_epoch", hs.newestEpoch)
+        .kvu("last_measure_epoch", lastMeasureEpoch())
+        .kvu("heartbeat_s", pol.heartbeatS)
+        .kvu("deadband_centi", pol.deadbandCenti)
+        .kvu("max_gap_s", historyMaxGapS());
+  }
   w.endObject();
 }
 
@@ -932,13 +1038,8 @@ void GrainMeter::writeDiag(JsonWriter& w) {
   writePower(w);
   writeRemoteUpdate(w);
   writeErrors(w);
-  w.key("history").beginObject().kvb("available", history_.available());
-  if (history_.available() && history_.forEach(0, 0, nullptr, nullptr)) {
-    w.kvu("records", history_.count())
-        .kvu("capacity", history_.capacity())
-        .kvu("oldest_epoch", history_.oldestEpoch());
-  }
-  w.endObject();
+  w.key("history");
+  writeHistoryInfo(w);
   w.key("ota");
   ota_.writeJson(w);
   p_.sys->writePlatformJson(w, true);

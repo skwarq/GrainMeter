@@ -436,4 +436,18 @@ export default {
   'hist.unavailable':
     'Local history unavailable: the device has an older partition table. Flash the firmware over USB (make flash-release) to enable it.',
   'hist.noClock': 'The history starts recording after the first time sync (first successful upload over Wi-Fi).',
+  'hist.signal': 'Wi-Fi signal',
+  'hist.signalQuality': 'Wi-Fi signal quality',
+  'hist.units': 'Units',
+  'hist.pctHint': 'Battery: estimated from the Li-ion cell voltage. Signal: −90 dBm = 0 %, −50 dBm = 100 %.',
+  'hist.noDeviceData': 'No device data in this range',
+  'hist.deviceSub': 'State stored with every measurement',
+  'hist.batteryRange': 'Battery min – max',
+  'hist.weakestSignal': 'Weakest signal',
+  'hist.failedUploads': 'Periods with failed uploads',
+  'hist.powerTime': 'Time in economy / critical mode',
+  'hist.loadingDays': 'Loading history: day {done} of {total}…',
+  'hist.storage': 'History storage',
+  'hist.capacityDays': 'lasts ~{n} days',
+  'hist.records': 'Stored changes',
 };

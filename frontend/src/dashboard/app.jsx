@@ -2,12 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { translate, DEFAULT_LANG, LANGS } from '../i18n/translate.js';
 import { I18nContext, tOr, useI18n } from '../components/i18n.js';
 import { Badge, Button, Card, KV, Loading, Logo } from '../components/ui.jsx';
-import { ALERT_DEFAULTS, AlertsCard, HistoryCard, PointTable } from '../components/History.jsx';
-import { LineChart } from '../components/LineChart.jsx';
+import { ALERT_DEFAULTS, AlertsCard, DeviceCharts, HistoryCard, PointTable } from '../components/History.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
 import { batteryPercent } from '../lib/battery.js';
 import { formatDuration } from '../lib/format.js';
-import { RANGES, alerts as findAlerts, gapThreshold, latestDiag, latestPoints, segments } from '../lib/feed.js';
+import { RANGES, alerts as findAlerts, gapThreshold, latestDiag, latestPoints } from '../lib/feed.js';
 import { powerTone } from '../lib/power.js';
 import { Setup } from './Setup.jsx';
 import { clearSettings, loadSettings, saveSettings } from './settings.js';
@@ -190,7 +189,7 @@ export function App() {
                 <HistoryCard feed={feed} range={range} now={now} onRange={(r) => store({ ...settings, range: r })} />
 
                 {settings.diagChannelId && (
-                  <DeviceCard diag={state.diag} error={state.diagError} t={t} lang={lang} now={now} range={range} />
+                  <DeviceCard diag={state.diag} error={state.diagError} t={t} now={now} range={range} />
                 )}
               </div>
             )}
@@ -214,7 +213,7 @@ function LangSwitch() {
   );
 }
 
-function DeviceCard({ diag, error, t, lang, now, range }) {
+function DeviceCard({ diag, error, t, now, range }) {
   if (error) {
     return (
       <Card title={t('dash.device')} icon="chip">
@@ -261,31 +260,16 @@ function DeviceCard({ diag, error, t, lang, now, range }) {
           [t('dash.diagAge'), t('common.ago', { age: formatDuration(Math.round((now - d.t) / 1000)) })],
         ]}
       />
-      <LineChart
-        lang={lang}
-        height={160}
-        unit="V"
-        digits={2}
+      <DeviceCharts
+        feed={{
+          entries: diag.entries.map((e) => ({
+            t: e.t,
+            values: [e.values[0] === null ? null : e.values[0] / 1000, e.values[1]],
+          })),
+        }}
+        gapMs={gapThreshold(diag) * 8}
         start={now - RANGES[range]}
         end={now}
-        emptyText=""
-        series={[
-          {
-            key: 'bat',
-            label: t('overview.battery'),
-            color: 'var(--p1)',
-            segments: segments(
-              {
-                entries: diag.entries.map((e) => ({
-                  ...e,
-                  values: [e.values[0] === null ? null : e.values[0] / 1000],
-                })),
-              },
-              0,
-              gapThreshold(diag) * 8,
-            ),
-          },
-        ]}
       />
     </Card>
   );

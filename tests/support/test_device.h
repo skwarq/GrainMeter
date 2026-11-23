@@ -24,6 +24,7 @@ struct TestDevice {
     gmpc::PcDevice::Options o;
     o.dataDir = dir;
     o.manualClock = true;
+    o.wallClockAtStart = false;  // exercise the device's no-clock path
     o.sensors = sensors;
     o.servicePassword = "test-password";
     dev.reset(new gmpc::PcDevice(o));

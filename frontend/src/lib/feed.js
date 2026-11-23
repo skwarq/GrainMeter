@@ -8,6 +8,9 @@
 // 4 sensor errors, 5 buffered samples, 6 dropped, 7 upload failures,
 // 8 wake count; status = "fw=0.1.1 wake=timer power=normal".
 
+import { batteryPercent } from './battery.js';
+import { rssiPercent } from './format.js';
+
 export const FIELD_COUNT = 8;
 const HOUR = 3600 * 1000;
 const DAY = 24 * HOUR;
@@ -207,7 +210,7 @@ export function segments(feed, i, gapMs) {
   let prevT = null;
   for (const e of feed.entries) {
     const v = e.values[i];
-    if (v === null || (prevT !== null && e.t - prevT > gapMs)) {
+    if (v === null || e.restart || (prevT !== null && e.t - prevT > gapMs)) {
       if (cur.length) out.push(cur);
       cur = [];
     }
@@ -218,8 +221,12 @@ export function segments(feed, i, gapMs) {
   return out;
 }
 
-/** Gap threshold for segments(): 3x the typical interval, at least 45 min. */
+/**
+ * Gap threshold for segments(): the device's own limit for its change-only
+ * history, else 3x the typical interval, at least 45 min.
+ */
 export function gapThreshold(feed) {
+  if (feed.maxGapMs) return feed.maxGapMs; // device history: changes only
   const iv = typicalInterval(feed);
   return Math.max(45 * 60 * 1000, iv ? iv * 3 : 0);
 }
@@ -302,39 +309,169 @@ export function latestDiag(feed) {
   };
 }
 
+const POWER_MODES = ['normal', 'economy', 'critical', null];
+const UPLOAD_STATES = [null, 'ok', 'failed', null];
+const HEADER = 16;
+const ROW = 24;
+
 /**
- * Local history exported by the device (GET /api/history/<range>):
- * "GMH1", uint16 rows, uint16 points, then rows of uint32 epoch +
- * int16 centi[8] (INT16_MIN = missing). Returns the same shape as
- * parseFeed() so every helper above works for both sources.
+ * One page of the device's local history (GET /api/history/<from>/<to>):
+ * header "GMH3", uint16 rows, uint16 points(8), uint32 next (0 = complete,
+ * else ask again from there), uint32 maxGap s; rows of 24 B: uint32 epoch,
+ * int16 centi[8] (INT16_MIN = missing), uint16 battery mV (0 = unknown),
+ * int8 RSSI dBm (0 = unknown), flags (bits 0-1 power mode, 2-3 last upload,
+ * 4 reconstructed time, 5 restart after power-up, 6 held until now).
+ * Rows are changes only (unchanged measurements are not stored): draw
+ * lines between them; rows further apart than maxGap = no data.
+ * Returns the same shape as parseFeed() plus `next` and `maxGapMs`.
  * fields: [{label, heightCm}] for the 8 points (from /api/status).
  */
 export function parseHistoryBinary(buffer, fields = [], name = '') {
   const dv = new DataView(buffer);
-  if (
-    dv.byteLength < 8 ||
-    String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)) !== 'GMH1'
-  ) {
-    throw new Error('bad history format');
-  }
+  const magic =
+    dv.byteLength >= HEADER ? String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3)) : '';
+  if (magic !== 'GMH3') throw new Error('bad history format');
   const rows = dv.getUint16(4, true);
   const points = dv.getUint16(6, true);
-  if (points !== FIELD_COUNT || dv.byteLength < 8 + rows * 20) throw new Error('bad history format');
+  if (points !== FIELD_COUNT || dv.byteLength < HEADER + rows * ROW) throw new Error('bad history format');
   const entries = [];
   for (let k = 0; k < rows; k++) {
-    const o = 8 + k * 20;
+    const o = HEADER + k * ROW;
     const values = [];
     for (let i = 0; i < FIELD_COUNT; i++) {
       const c = dv.getInt16(o + 4 + 2 * i, true);
       values.push(c === -32768 ? null : c / 100);
     }
-    entries.push({ t: dv.getUint32(o, true) * 1000, values, errors: {}, kv: {} });
+    const mv = dv.getUint16(o + 20, true);
+    const rssi = dv.getInt8(o + 22);
+    const flags = dv.getUint8(o + 23);
+    entries.push({
+      t: dv.getUint32(o, true) * 1000,
+      values,
+      errors: {},
+      kv: {},
+      restart: Boolean(flags & 0x20),
+      diag: {
+        batteryMv: mv || null,
+        rssi: rssi || null,
+        power: POWER_MODES[flags & 3],
+        upload: UPLOAD_STATES[(flags >> 2) & 3],
+        reconstructed: Boolean(flags & 0x10),
+        hold: Boolean(flags & 0x40),
+      },
+    });
   }
   entries.sort((a, b) => a.t - b.t);
+  return {
+    name,
+    fields: historyFields(fields),
+    entries,
+    next: dv.getUint32(8, true),
+    maxGapMs: dv.getUint32(12, true) * 1000,
+  };
+}
+
+function historyFields(fields) {
   const f = [];
   for (let i = 0; i < FIELD_COUNT; i++) {
     const src = fields[i] || {};
     f.push({ index: i + 1, label: src.label || '', heightCm: src.heightCm === undefined ? null : src.heightCm });
   }
-  return { name, fields: f, entries };
+  return f;
+}
+
+/**
+ * Joins history pages/days into one feed (sorted, one entry per time; a
+ * held "until now" row is dropped when a real row follows it).
+ */
+export function mergeFeeds(feeds, fields = [], name = '') {
+  const all = feeds.flatMap((f) => f.entries).sort((a, b) => a.t - b.t);
+  const entries = [];
+  for (const e of all) {
+    const prev = entries[entries.length - 1];
+    if (prev && prev.t === e.t) continue;
+    if (prev && prev.diag && prev.diag.hold) entries.pop();
+    entries.push(e);
+  }
+  const maxGapMs = Math.max(0, ...feeds.map((f) => f.maxGapMs || 0)) || undefined;
+  return { name, fields: historyFields(fields), entries, maxGapMs };
+}
+
+/** Device state over time as a feed: values [battery V, RSSI dBm]. */
+export function deviceFeed(feed) {
+  return {
+    entries: feed.entries
+      .filter((e) => e.diag)
+      .map((e) => ({
+        t: e.t,
+        restart: e.restart,
+        values: [e.diag.batteryMv === null ? null : e.diag.batteryMv / 1000, e.diag.rssi],
+      })),
+    maxGapMs: feed.maxGapMs,
+  };
+}
+
+/**
+ * Summary of the device state stored with the local history (null without
+ * device data). Times in power modes are weighted by how long each row
+ * lasted (rows are changes only); failedUploads counts periods in which the
+ * last upload had failed.
+ */
+export function deviceSummary(feed) {
+  const rows = feed.entries.filter((e) => e.diag);
+  if (!rows.length) return null;
+  const gap = gapThreshold(feed);
+  let bMin = null;
+  let bMax = null;
+  let rMin = null;
+  let failed = 0;
+  let known = 0;
+  let economy = 0;
+  let critical = 0;
+  let lastBattery = null;
+  let lastRssi = null;
+  let prevUpload = null;
+  rows.forEach((e, k) => {
+    const d = e.diag;
+    if (d.batteryMv !== null) {
+      bMin = bMin === null ? d.batteryMv : Math.min(bMin, d.batteryMv);
+      bMax = bMax === null ? d.batteryMv : Math.max(bMax, d.batteryMv);
+      lastBattery = d.batteryMv;
+    }
+    if (d.rssi !== null) {
+      rMin = rMin === null ? d.rssi : Math.min(rMin, d.rssi);
+      lastRssi = d.rssi;
+    }
+    if (d.upload === 'failed' && prevUpload !== 'failed') failed++;
+    if (d.upload) prevUpload = d.upload;
+    const next = rows[k + 1];
+    const dt = next && !next.restart ? Math.min(next.t - e.t, gap) : 0;
+    if (d.power && dt > 0) {
+      known += dt;
+      if (d.power === 'economy') economy += dt;
+      if (d.power === 'critical') critical += dt;
+    }
+  });
+  const pct = (n) => (known ? Math.round((n * 100) / known) : null);
+  return {
+    batteryMin: bMin,
+    batteryMax: bMax,
+    batteryLast: lastBattery,
+    rssiWeakest: rMin,
+    rssiLast: lastRssi,
+    failedUploads: failed,
+    economyPct: pct(economy),
+    criticalPct: pct(critical),
+  };
+}
+
+/** Feed with values [battery V, RSSI dBm] -> [battery %, signal %]. */
+export function devicePercentFeed(feed) {
+  return {
+    ...feed,
+    entries: feed.entries.map((e) => ({
+      ...e,
+      values: [e.values[0] === null ? null : batteryPercent(e.values[0] * 1000), rssiPercent(e.values[1])],
+    })),
+  };
 }

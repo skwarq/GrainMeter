@@ -145,7 +145,7 @@ błąd `network: AP 'SimulatedWiFi' not found (simulated outage)`, bufor rośnie
 
 ## Testy, formatowanie, Valgrind
 
-- `cmake --workflow --preset dev` – 114 testów GoogleTest (CTest).
+- `cmake --workflow --preset dev` – 116 testów GoogleTest (CTest).
   Jednostkowe: CRC/ROM, Search ROM na symulowanej magistrali, dekodowanie
   DS18B20 (tabela z datasheetu, 0,0 °C, brak, CRC, 85 °C power-on, zwarcie,
   rozdzielczości), trwałe mapowanie ROM (zapis + odczyt „po restarcie”),
@@ -184,7 +184,7 @@ Wynik w `firmware/dist/`:
   `flash_args.txt`.
 
 Skrypt sprawdza, czy aplikacja mieści się w **obu** slotach OTA (z binarnej
-tablicy partycji). Aktualnie: aplikacja 1 244 448 B, slot 1 900 544 B (34 % wolne).
+tablicy partycji). Aktualnie: aplikacja 1 246 352 B, slot 1 900 544 B (34 % wolne).
 
 Partycje (`firmware/partitions.csv`, flash 4 MB ESP32-C6FH4): `nvs` 24 KiB,
 `otadata`, `phy_init`, `ota_0` i `ota_1` po 1,81 MiB, `coredump` 64 KiB,
@@ -607,17 +607,47 @@ Jednorazowo: GitHub → Settings → Pages → *Source: GitHub Actions*. Workflo
 
 ## Historia lokalna w urządzeniu
 
-Przy silosie zwykle nie ma Internetu, więc urządzenie zapisuje każdy pomiar
-(z ważnym czasem) we własnej pamięci flash – partycja `history` 192 KiB,
-ok. 6000 pomiarów ≈ 62 dni przy 15 min. Zapis cykliczny po sektorach z CRC
-każdego rekordu (zapis przerwany utratą zasilania jest pomijany), każdy sektor
-kasowany raz na ~2 miesiące.
+Przy silosie zwykle nie ma Internetu, więc urządzenie trzyma historię we
+własnej pamięci flash (partycja `history`, 192 KiB). Zapisywane są **tylko
+zmiany**:
+
+- pomiar zapisuje się, gdy którykolwiek punkt zmienił się o ≥ 0,15 °C (szum
+  DS18B20 ±1 krok = 0,0625 °C nie wywołuje zapisu), zmienił się stan czujnika,
+  bateria o ≥ 30 mV, sygnał Wi-Fi o ≥ 6 dB, tryb zasilania lub wynik wysyłki,
+- przy braku zmian co 3 h zapis kontrolny (odróżnia „silos stabilny” od
+  „urządzenie nie działało”),
+- przed zmianą po okresie bez zmian zapisywany jest ostatni niezmieniony
+  pomiar, więc linia na wykresie nie odbiega od pomiarów o więcej niż 0,15 °C,
+- rekordy są różnicowe: pierwszy w sektorze ma pełny stan (34 B), kolejne
+  tylko różnice (zwykle 6–14 B), każdy z CRC.
+
+Test z realistycznym miesiącem (8 punktów, dryf 0,3 °C/dobę, wahania dobowe,
+szum czujników): 561 z 2880 pomiarów zmienia dane, **~390 B/dobę → ok. 16
+miesięcy historii** (wcześniej 3 KB/dobę, 62 dni). Spokojny silos zajmuje
+jeszcze mniej.
+
+Zużycie flash: kasowanie sektora następuje raz na pełny obieg bufora
+(przy ~390 B/dobę – raz na ~500 dni), a flash ESP32-C6 wytrzymuje min.
+100 000 cykli kasowania na sektor; to praktycznie nieograniczony czas pracy
+(ograniczeniem jest raczej ~20 lat przechowywania danych przez flash).
 
 Portal (tryb serwisowy lub symulator) ma zakładkę **Historia** z tym samym
-widokiem co dashboard: wykres, tabela, ostrzeżenia, silos na żywo. Dane:
-`GET /api/history/24h|7d|30d` (format binarny, maks. 720 wierszy – dla 30 dni
-uśrednione do godzin). Historia zaczyna się po pierwszej synchronizacji czasu
-(pierwsza udana wysyłka). W symulatorze jest w `pc-data/history.bin`.
+widokiem co dashboard: wykres, tabela, ostrzeżenia, silos na żywo oraz karta
+*Urządzenie* (bateria, sygnał Wi-Fi, tryby zasilania, nieudane wysyłki,
+zajętość pamięci i na ile dni wystarczy). Portal pobiera historię **po
+dniach** (`GET /api/history/<od>/<do>`, strony do 256 wierszy) – najpierw
+dzisiaj, potem starsze dni; zakończone dni trzyma w pamięci przeglądarki i
+przy odświeżaniu pyta tylko o dzisiaj. Opis API: [docs/API.md](docs/API.md).
+
+Pomiary sprzed pierwszej synchronizacji czasu (ESP32 po włączeniu) są
+dopisywane po pierwszej wysyłce (czas odtworzony, oznaczony restart po
+włączeniu – wykres przerywa wtedy linię). W symulatorze historia jest w
+`pc-data/history.bin`; symulator startuje z zegarem komputera, więc historia
+działa od razu (`--no-time` = jak świeże ESP32 bez czasu). Historia zapisana
+przez 0.2.x (inny format) jest pomijana i nadpisywana po kolei.
+
+Dashboard (GitHub Pages) pokazuje baterię i sygnał z kanału diagnostycznego
+(raport co 6 h).
 
 ## CI
 

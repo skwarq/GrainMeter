@@ -95,6 +95,12 @@ class GrainMeter {
   RetainedState& state() { return *st_; }
   OtaSession& ota() { return ota_; }
   HistoryLog& history() { return history_; }
+  // Wall-clock time of the last measurement (0 = unknown).
+  uint32_t lastMeasureEpoch() const;
+  // Rows of the local history further apart than this = no data between.
+  uint32_t historyMaxGapS() const;
+  // {available, records, used_bytes, capacity_bytes, ...} (reads the log).
+  void writeHistoryInfo(JsonWriter& w);
   const Ports& ports() const { return p_; }
 
   // Recent error messages (newest last), shown in portal and diagnostics.
@@ -121,6 +127,7 @@ class GrainMeter {
       __attribute__((format(printf, 3, 4)))
 #endif
       ;
+  HistoryRecord historyRecord(const Sample& s, bool reconstructed);
   void stampSampleTimes(uint32_t nowEpoch, uint32_t nowMono);
   void finishUpload(bool ok, int status, const char* msg);
 

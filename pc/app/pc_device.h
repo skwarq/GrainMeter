@@ -29,6 +29,9 @@ class PcDevice : public gm::SystemPort {
     std::string configPath;    // default <dataDir>/grainmeter-pc.conf
     double speed = 60.0;       // simulated seconds per real second
     bool manualClock = false;  // tests: time moves only when advanced
+    // Start with the PC's real wall clock (history works at once). false =
+    // like a fresh ESP32: no time until the first upload window (SNTP).
+    bool wallClockAtStart = true;
     int sensors = 8;
     std::string servicePassword;    // empty: keep stored / generate
     bool provisionDefaults = true;  // fill simulated Wi-Fi + channels

@@ -1,6 +1,6 @@
 // History views shared by the device portal (local history from flash) and
 // the remote dashboard (ThingSpeak). Both pass a "feed" from lib/feed.js.
-import { useState } from 'preact/hooks';
+import { useMemo, useState } from 'preact/hooks';
 import { useI18n, tOr } from './i18n.js';
 import { Card } from './ui.jsx';
 import { LineChart } from './LineChart.jsx';
@@ -14,6 +14,7 @@ import {
   latestPoints,
   pointStats,
   segments,
+  devicePercentFeed,
 } from '../lib/feed.js';
 import { formatTemp } from '../lib/temp.js';
 import { formatDuration } from '../lib/format.js';
@@ -182,5 +183,84 @@ export function AlertsCard({ feed, settings, now }) {
         ))}
       </ul>
     </Card>
+  );
+}
+
+const UNITS_KEY = 'gm.deviceUnits';
+
+function initialUnits() {
+  try {
+    const u = localStorage.getItem(UNITS_KEY);
+    if (u === 'pct' || u === 'raw') return u;
+  } catch {
+    /* ignore */
+  }
+  return 'pct';
+}
+
+/**
+ * Battery and Wi-Fi signal over time. `feed` entries carry values
+ * [battery V, RSSI dBm] (lib/feed.js deviceFeed() or the diag channel).
+ * The user switches between percent (easier to read) and V / dBm.
+ */
+export function DeviceCharts({ feed, start, end, gapMs }) {
+  const { t, lang } = useI18n();
+  const [units, setUnitsState] = useState(initialUnits);
+  const setUnits = (u) => {
+    setUnitsState(u);
+    try {
+      localStorage.setItem(UNITS_KEY, u);
+    } catch {
+      /* ignore */
+    }
+  };
+  const pct = units === 'pct';
+  // The device history already knows its own gap limit; the ThingSpeak diag
+  // channel reports only every few hours.
+  const gap = gapMs || feed.maxGapMs || gapThreshold(feed) * 8;
+  const shown = useMemo(() => (pct ? devicePercentFeed(feed) : feed), [feed, pct]);
+  const chart = (i, key, label, unit, digits, color) => (
+    <div class="device-chart">
+      <h3 class="device-chart-title">{label}</h3>
+      <LineChart
+        lang={lang}
+        height={150}
+        unit={unit}
+        digits={digits}
+        start={start}
+        end={end}
+        domain={pct ? [0, 100] : undefined}
+        emptyText={t('hist.noDeviceData')}
+        series={[{ key, label, color, segments: segments(shown, i, gap) }]}
+      />
+    </div>
+  );
+  return (
+    <div class="device-charts-wrap">
+      <div class="device-charts-head">
+        <div class="seg" role="tablist" aria-label={t('hist.units')}>
+          {[
+            ['pct', '%'],
+            ['raw', 'V · dBm'],
+          ].map(([u, label]) => (
+            <button
+              key={u}
+              type="button"
+              role="tab"
+              aria-selected={units === u}
+              class={units === u ? 'on' : ''}
+              onClick={() => setUnits(u)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {pct && <p class="muted small">{t('hist.pctHint')}</p>}
+      </div>
+      <div class="device-charts">
+        {chart(0, 'bat', t('overview.battery'), pct ? '%' : 'V', pct ? 0 : 2, 'var(--p1)')}
+        {chart(1, 'rssi', pct ? t('hist.signalQuality') : t('hist.signal'), pct ? '%' : 'dBm', 0, 'var(--p5)')}
+      </div>
+    </div>
   );
 }

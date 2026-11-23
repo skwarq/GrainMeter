@@ -54,6 +54,25 @@ static bool is(const PortalRequest& r, const char* method, const char* path) {
   return strcmp(r.method, method) == 0 && strcmp(r.path, path) == 0;
 }
 
+// "<from>/<to>" with decimal epoch seconds, from <= to.
+static bool parseRange(const char* p, uint32_t* from, uint32_t* to) {
+  uint32_t v[2] = {0, 0};
+  for (int k = 0; k < 2; ++k) {
+    if (*p < '0' || *p > '9') return false;
+    uint64_t x = 0;
+    while (*p >= '0' && *p <= '9') {
+      x = x * 10 + static_cast<uint64_t>(*p++ - '0');
+      if (x > 0xFFFFFFFFull) return false;
+    }
+    v[k] = static_cast<uint32_t>(x);
+    if (k == 0 && *p++ != '/') return false;
+  }
+  if (*p != '\0' || v[0] > v[1]) return false;
+  *from = v[0];
+  *to = v[1];
+  return true;
+}
+
 bool Portal::handle(const PortalRequest& req, PortalReply* r) {
   r->restartAfter = false;
   if (strncmp(req.path, "/api/", 5) != 0) {
@@ -86,33 +105,38 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
     reply(r, 200);
     return true;
   }
+  if (is(req, "GET", "/api/history")) {
+    JsonWriter w(out_, sizeof(out_));
+    app_.writeHistoryInfo(w);
+    reply(r, 200);
+    return true;
+  }
   if (strcmp(req.method, "GET") == 0 &&
       strncmp(req.path, "/api/history/", 13) == 0) {
-    // Compact binary history for the portal charts (see historyExport).
-    const char* range = req.path + 13;
-    uint32_t span = 0;
-    if (strcmp(range, "24h") == 0) span = 24u * 3600u;
-    if (strcmp(range, "7d") == 0) span = 7u * 24u * 3600u;
-    if (strcmp(range, "30d") == 0) span = 30u * 24u * 3600u;
-    if (span == 0) {
-      replyError(r, 404, "range: 24h, 7d or 30d");
+    // /api/history/<from>/<to> (UTC epoch seconds): one page of the local
+    // history, binary (see historyExport). The client asks per day and
+    // continues from header.next while it is not 0.
+    uint32_t from = 0;
+    uint32_t to = 0;
+    if (!parseRange(req.path + 13, &from, &to)) {
+      replyError(r, 404, "use /api/history/<from>/<to> (epoch seconds)");
       return true;
     }
     if (!app_.history().available()) {
       replyError(r, 503, "local history not available");
       return true;
     }
-    const uint32_t now =
-        app_.ports().clock->wallValid() ? app_.ports().clock->epoch() : 0;
-    size_t len = 0;
-    if (now != 0) {
-      len = historyExport(app_.history(), now > span ? now - span : 0, now,
-                          kHistoryMaxRows, reinterpret_cast<uint8_t*>(out_),
-                          sizeof(out_));
-    }
-    if (len == 0) {  // no clock yet or nothing stored: empty, valid export
-      memcpy(out_, "GMH1\0\0\x08\0", 8);
-      len = 8;
+    HistoryExportRequest q;
+    q.from = from;
+    q.to = to;
+    q.maxRows = kHistoryPageRows;
+    q.maxGapS = app_.historyMaxGapS();
+    q.holdUntil = app_.lastMeasureEpoch();
+    const size_t len = historyExport(
+        app_.history(), q, reinterpret_cast<uint8_t*>(out_), sizeof(out_));
+    if (len == 0) {
+      replyError(r, 500, "history read failed");
+      return true;
     }
     r->status = 200;
     r->contentType = "application/octet-stream";

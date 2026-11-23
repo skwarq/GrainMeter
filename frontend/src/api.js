@@ -170,9 +170,12 @@ export const getDiag = (signal) => request('GET', '/api/diag', { signal });
 export const getConfig = (signal) => request('GET', '/api/config', { signal });
 export const getOta = (signal) => request('GET', '/api/ota', { signal });
 
-/** Local history from the device flash as an ArrayBuffer (lib/feed.js
- *  parseHistoryBinary). range: '24h' | '7d' | '30d'. */
-export async function getHistory(range, signal) {
+/** Local history summary: records, used/capacity bytes, oldest/newest... */
+export const getHistoryInfo = (signal) => request('GET', '/api/history', { signal });
+
+/** One page of the local history (epoch seconds, inclusive) as an
+ *  ArrayBuffer for lib/feed.js parseHistoryBinary; continue from its `next`. */
+export async function getHistoryPage(from, to, signal) {
   const ctrl = new AbortController();
   let timedOut = false;
   const timer = setTimeout(() => {
@@ -184,7 +187,7 @@ export async function getHistory(range, signal) {
   try {
     let res;
     try {
-      res = await fetch('/api/history/' + encodeURIComponent(range), {
+      res = await fetch(`/api/history/${Math.floor(from)}/${Math.floor(to)}`, {
         cache: 'no-store',
         credentials: 'same-origin',
         signal: ctrl.signal,

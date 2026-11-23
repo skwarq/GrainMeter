@@ -78,3 +78,12 @@ export function samplesPerUpload(measureS, uploadS) {
   if (!Number.isFinite(m) || !Number.isFinite(u) || m <= 0 || u <= 0) return null;
   return Math.max(1, Math.floor(u / m));
 }
+
+/**
+ * Signal quality 0..100 % from RSSI (dBm): -90 dBm (barely usable for the
+ * ESP32) = 0 %, -50 dBm or better = 100 %. null when unknown.
+ */
+export function rssiPercent(rssi) {
+  if (typeof rssi !== 'number' || !Number.isFinite(rssi) || rssi >= 0) return null;
+  return Math.round(Math.min(100, Math.max(0, ((rssi + 90) * 100) / 40)));
+}

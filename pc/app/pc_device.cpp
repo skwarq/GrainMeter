@@ -29,6 +29,7 @@ PcDevice::PcDevice(const Options& opt)
       wakeReason_("power-on"),
       resetReason_("power-on") {
   std::memset(&retained_, 0xA5, sizeof(retained_));  // RTC RAM after power-up
+  clock_.setSynced(opt.wallClockAtStart);
 }
 
 static std::string randomPassword() {

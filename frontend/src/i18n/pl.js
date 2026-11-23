@@ -437,4 +437,18 @@ export default {
     'Historia lokalna niedostępna: urządzenie ma starszą tablicę partycji. Wgraj firmware przez USB (make flash-release), aby ją włączyć.',
   'hist.noClock':
     'Historia zacznie się zapisywać po pierwszej synchronizacji czasu (pierwsza udana wysyłka przez Wi-Fi).',
+  'hist.signal': 'Sygnał Wi-Fi',
+  'hist.signalQuality': 'Jakość sygnału Wi-Fi',
+  'hist.units': 'Jednostki',
+  'hist.pctHint': 'Bateria: szacunek z napięcia ogniwa Li-ion. Sygnał: −90 dBm = 0 %, −50 dBm = 100 %.',
+  'hist.noDeviceData': 'Brak danych urządzenia w tym zakresie',
+  'hist.deviceSub': 'Stan zapisany przy każdym pomiarze',
+  'hist.batteryRange': 'Bateria min – max',
+  'hist.weakestSignal': 'Najsłabszy sygnał',
+  'hist.failedUploads': 'Okresy z nieudaną wysyłką',
+  'hist.powerTime': 'Czas w trybie oszczędnym / krytycznym',
+  'hist.loadingDays': 'Wczytywanie historii: dzień {done} z {total}…',
+  'hist.storage': 'Pamięć historii',
+  'hist.capacityDays': 'wystarczy na ~{n} dni',
+  'hist.records': 'Zapisanych zmian',
 };

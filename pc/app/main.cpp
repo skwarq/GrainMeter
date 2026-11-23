@@ -44,6 +44,7 @@ void usage() {
       "  --portal-dir DIR   portal files (default: source tree)\n"
       "  --password P       set the service password\n"
       "  --no-console       do not read commands from stdin\n"
+      "  --no-time          start without wall clock (like a fresh ESP32)\n"
       "  --run-for S        exit after S real seconds (smoke tests)\n");
 }
 
@@ -79,6 +80,8 @@ int main(int argc, char** argv) {
       portalDir = argv[++i];
     } else if (a == "--password" && hasValue) {
       opt.servicePassword = argv[++i];
+    } else if (a == "--no-time") {
+      opt.wallClockAtStart = false;
     } else if (a == "--no-console") {
       console = false;
     } else if (a == "--run-for" && hasValue) {

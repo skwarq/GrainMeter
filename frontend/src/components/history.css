@@ -320,3 +320,40 @@
 .dash-grid > .span-all {
   grid-column: 1 / -1;
 }
+
+.device-charts {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+.device-chart-title {
+  margin: 0 0 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted, inherit);
+}
+.device-history {
+  display: grid;
+  gap: 16px;
+}
+@media (min-width: 900px) {
+  .device-history {
+    grid-template-columns: minmax(330px, 1fr) 2fr;
+    align-items: start;
+  }
+  .dash-device-history .device-charts {
+    grid-template-columns: 1fr 1fr;
+    margin-top: 0;
+  }
+}
+
+.device-charts-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+.device-charts-head p {
+  margin: 0;
+}

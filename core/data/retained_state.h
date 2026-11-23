@@ -60,7 +60,7 @@ struct RetainedState {
   uint8_t hasDiag;
   uint8_t hasUpdateCheck;
   uint8_t updateResult;  // RemoteUpdateResult (app/grainmeter.h)
-  uint8_t reserved2;
+  int8_t lastRssi;       // dBm of the last Wi-Fi connection, 0 = unknown
   uint32_t lastDiagMonoS;
   uint32_t lastUpdateCheckMonoS;
   char updateLatest[33];  // version announced by the manifest

@@ -186,28 +186,196 @@ test('latestDiag reads the diagnostic channel layout', () => {
   assert.equal(latestDiag(parseFeed({ feeds: [] })), null);
 });
 
-test('parseHistoryBinary: device export -> same shape as ThingSpeak feeds', async () => {
-  const { parseHistoryBinary, segments, pointStats } = await import('../src/lib/feed.js');
-  const rows = 3;
-  const buf = new ArrayBuffer(8 + rows * 20);
+// Builds a GMH3 page: rows = [{t (s), c (centi for all points), mv, rssi, flags}]
+function gmh3(rows, next = 0, maxGap = 12600) {
+  const buf = new ArrayBuffer(16 + rows.length * 24);
   const dv = new DataView(buf);
-  'GMH1'.split('').forEach((c, i) => dv.setUint8(i, c.charCodeAt(0)));
-  dv.setUint16(4, rows, true);
+  'GMH3'.split('').forEach((ch, i) => dv.setUint8(i, ch.charCodeAt(0)));
+  dv.setUint16(4, rows.length, true);
   dv.setUint16(6, 8, true);
-  const base = Date.parse('2026-11-20T00:00:00Z') / 1000;
-  for (let k = 0; k < rows; k++) {
-    const o = 8 + k * 20;
-    dv.setUint32(o, base + (rows - 1 - k) * 900, true); // reverse order on purpose
-    for (let i = 0; i < 8; i++) dv.setInt16(o + 4 + 2 * i, i === 2 && k === 1 ? -32768 : 1000 + k * 10 + i, true);
-  }
-  const f = parseHistoryBinary(buf, [{ label: 'P1 (150 cm)', heightCm: 150 }]);
-  assert.equal(f.entries.length, 3);
-  assert.ok(f.entries[0].t < f.entries[2].t);
-  assert.equal(f.entries[2].values[0], 10); // first row (k=0) is the newest
+  dv.setUint32(8, next, true);
+  dv.setUint32(12, maxGap, true);
+  rows.forEach((r, k) => {
+    const o = 16 + k * 24;
+    dv.setUint32(o, r.t, true);
+    for (let i = 0; i < 8; i++) dv.setInt16(o + 4 + 2 * i, r.missing === i ? -32768 : r.c + i, true);
+    dv.setUint16(o + 20, r.mv || 0, true);
+    dv.setInt8(o + 22, r.rssi || 0);
+    dv.setUint8(o + 23, r.flags || 0);
+  });
+  return buf;
+}
+
+const H0 = Date.parse('2026-11-20T00:00:00Z') / 1000;
+
+test('parseHistoryBinary: GMH3 page with device state', async () => {
+  const { parseHistoryBinary, segments, pointStats, gapThreshold } = await import('../src/lib/feed.js');
+  const f = parseHistoryBinary(
+    gmh3(
+      [
+        { t: H0 + 1800, c: 1010, mv: 3500, rssi: -79, flags: 1 | (2 << 2), missing: 2 },
+        { t: H0, c: 1000, mv: 3900, rssi: -61, flags: 1 << 2 },
+        { t: H0 + 9000, c: 1020, flags: 3 | 0x10 | 0x20 },
+        { t: H0 + 9900, c: 1020, mv: 3890, rssi: -60, flags: 0x40 },
+      ],
+      H0 + 10000,
+    ),
+    [{ label: 'P1 (150 cm)', heightCm: 150 }],
+  );
+  assert.equal(f.entries.length, 4);
+  assert.equal(f.entries[0].t, H0 * 1000); // sorted
+  assert.equal(f.entries[1].values[0], 10.1);
   assert.equal(f.entries[1].values[2], null); // missing, not 0
+  assert.deepEqual(f.entries[1].diag, {
+    batteryMv: 3500,
+    rssi: -79,
+    power: 'economy',
+    upload: 'failed',
+    reconstructed: false,
+    hold: false,
+  });
+  assert.equal(f.entries[2].restart, true);
+  assert.equal(f.entries[2].diag.batteryMv, null);
+  assert.equal(f.entries[2].diag.power, null);
+  assert.equal(f.entries[3].diag.hold, true);
+  assert.equal(f.next, H0 + 10000);
+  assert.equal(f.maxGapMs, 12600000);
+  assert.equal(gapThreshold(f), 12600000);
   assert.equal(f.fields[0].heightCm, 150);
-  assert.equal(f.fields[1].heightCm, null);
-  assert.equal(pointStats(f, 0).count, 3);
-  assert.equal(segments(f, 2, 3600000).length, 2);
-  assert.throws(() => parseHistoryBinary(new ArrayBuffer(4)));
+  assert.equal(pointStats(f, 0).count, 4);
+  // a restart (power-up) breaks the line even within maxGap
+  assert.equal(segments(f, 0, gapThreshold(f)).length, 2);
+  assert.throws(() => parseHistoryBinary(new ArrayBuffer(8)));
+});
+
+test('mergeFeeds: days joined, duplicates and superseded hold rows dropped', async () => {
+  const { parseHistoryBinary, mergeFeeds } = await import('../src/lib/feed.js');
+  const day1 = parseHistoryBinary(
+    gmh3([
+      { t: H0, c: 1000 },
+      { t: H0 + 900, c: 1100, flags: 0x40 },
+    ]),
+  );
+  const day2 = parseHistoryBinary(
+    gmh3([
+      { t: H0 + 900, c: 1100 },
+      { t: H0 + 1800, c: 1200 },
+    ]),
+  );
+  const m = mergeFeeds([day2, day1]);
+  assert.deepEqual(
+    m.entries.map((e) => e.t / 1000 - H0),
+    [0, 900, 1800],
+  );
+  assert.equal(m.maxGapMs, 12600000);
+  const held = mergeFeeds([
+    parseHistoryBinary(
+      gmh3([
+        { t: H0, c: 1 },
+        { t: H0 + 500, c: 1, flags: 0x40 },
+        { t: H0 + 900, c: 2 },
+      ]),
+    ),
+  ]);
+  assert.deepEqual(
+    held.entries.map((e) => e.t / 1000 - H0),
+    [0, 900],
+  );
+});
+
+test('dayChunks + loadHistory: newest day first, pages, cache of past days', async () => {
+  const { dayChunks, loadHistory, historyCapacityDays } = await import('../src/lib/historyLoader.js');
+  const now = new Date(2026, 10, 20, 15, 30).getTime(); // local time
+  const chunks = dayChunks(now, 7 * 86400000);
+  assert.equal(chunks.length, 8); // 7 days back to midnight + today
+  // today and yesterday may still receive backfilled samples: not cached
+  assert.equal(chunks[0].complete, false);
+  assert.equal(chunks[1].complete, false);
+  assert.ok(chunks.slice(3).every((c) => c.complete));
+  assert.ok(chunks[0].from > chunks[1].from);
+  assert.equal(new Date(chunks[1].from * 1000).getHours(), 0);
+  assert.equal(chunks[1].to + 1, chunks[0].from);
+
+  const calls = [];
+  const paged = new Set();
+  const fetchPage = async (from, to) => {
+    calls.push(from);
+    // two pages for each day: the first one says where to continue
+    if (!paged.has(to)) {
+      paged.add(to);
+      return gmh3([{ t: from, c: 1000 }], from + 3600);
+    }
+    return gmh3([{ t: from + 60, c: 1001 }]);
+  };
+  const cache = new Map();
+  const progress = [];
+  const f = await loadHistory({
+    nowMs: now,
+    rangeMs: 3 * 86400000,
+    fetchPage,
+    cache,
+    onProgress: (_feed, done, total) => progress.push(`${done}/${total}`),
+  });
+  assert.deepEqual(progress, ['1/4', '2/4', '3/4', '4/4']);
+  assert.equal(calls.length, 8); // 4 days x 2 pages
+  assert.equal(f.entries.length, 8);
+  assert.equal(cache.size, 1); // only the day older than the backfill window
+  calls.length = 0;
+  paged.clear();
+  await loadHistory({ nowMs: now, rangeMs: 3 * 86400000, fetchPage, cache });
+  assert.equal(calls.length, 6); // 3 recent days again, the oldest from the cache
+
+  assert.equal(
+    historyCapacityDays({
+      records: 10,
+      used_bytes: 1000,
+      capacity_bytes: 100000,
+      oldest_epoch: H0,
+      newest_epoch: H0 + 2 * 86400,
+    }),
+    200,
+  );
+  assert.equal(historyCapacityDays({ records: 0 }), null);
+});
+
+test('deviceSummary: time-weighted power modes, failed upload periods', async () => {
+  const { parseHistoryBinary, deviceFeed, deviceSummary } = await import('../src/lib/feed.js');
+  const f = parseHistoryBinary(
+    gmh3([
+      { t: H0, c: 1500, mv: 3900, rssi: -61, flags: 0 | (1 << 2) }, // normal, ok: 3 h
+      { t: H0 + 10800, c: 1500, mv: 3500, rssi: -79, flags: 1 | (2 << 2) }, // economy, failed: 1 h
+      { t: H0 + 14400, c: 1500, mv: 3480, rssi: -80, flags: 1 | (2 << 2) }, // still failed
+      { t: H0 + 14400 + 3600, c: 1500, mv: 3470, rssi: -70, flags: 1 | (1 << 2) },
+    ]),
+  );
+  assert.deepEqual(deviceFeed(f).entries[0].values, [3.9, -61]);
+  const s = deviceSummary(f);
+  assert.equal(s.batteryMin, 3470);
+  assert.equal(s.batteryMax, 3900);
+  assert.equal(s.batteryLast, 3470);
+  assert.equal(s.rssiWeakest, -80);
+  assert.equal(s.failedUploads, 1);
+  assert.equal(s.economyPct, 40); // 2 h of 5 h
+  assert.equal(s.criticalPct, 0);
+  assert.equal(deviceSummary({ entries: [] }), null);
+});
+
+test('percent views: battery from the Li-ion curve, signal -90..-50 dBm', async () => {
+  const { rssiPercent } = await import('../src/lib/format.js');
+  const { devicePercentFeed } = await import('../src/lib/feed.js');
+  assert.equal(rssiPercent(-50), 100);
+  assert.equal(rssiPercent(-40), 100);
+  assert.equal(rssiPercent(-70), 50);
+  assert.equal(rssiPercent(-90), 0);
+  assert.equal(rssiPercent(-95), 0);
+  assert.equal(rssiPercent(null), null);
+  assert.equal(rssiPercent(0), null);
+  const f = devicePercentFeed({
+    entries: [
+      { t: 1, values: [3.7, -70] },
+      { t: 2, values: [null, null] },
+    ],
+  });
+  assert.deepEqual(f.entries[0].values, [25, 50]);
+  assert.deepEqual(f.entries[1].values, [null, null]);
 });

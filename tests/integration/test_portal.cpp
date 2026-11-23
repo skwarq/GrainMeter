@@ -181,23 +181,40 @@ TEST_F(PortalTest, OtaRequiresPasswordAndCompleteUpload) {
 
 TEST_F(PortalTest, LocalHistoryForCharts) {
   post("/api/automap", "");
+  auto info = cli->Get("/api/history");
+  ASSERT_TRUE(info);
+  EXPECT_NE(info->body.find("\"available\":true"), std::string::npos);
+  EXPECT_NE(info->body.find("\"records\":0"), std::string::npos);
   // empty history (no clock yet) is a valid, empty export
-  auto r = cli->Get("/api/history/24h");
+  const char* all = "/api/history/0/4294967295";
+  auto r = cli->Get(all);
   ASSERT_TRUE(r);
   EXPECT_EQ(r->status, 200);
   EXPECT_EQ(r->get_header_value("Content-Type"), "application/octet-stream");
-  ASSERT_EQ(r->body.size(), 8u);
+  ASSERT_EQ(r->body.size(), 16u);
+  EXPECT_EQ(r->body.substr(0, 4), "GMH3");
   // one upload window sets the clock; later measurements go to history
   t.runFor(3 * 3600, 300);
-  r = cli->Get("/api/history/24h");
+  info = cli->Get("/api/history");
+  EXPECT_EQ(info->body.find("\"records\":0"), std::string::npos);
+  EXPECT_NE(info->body.find("\"used_bytes\":"), std::string::npos);
+  EXPECT_NE(info->body.find("\"max_gap_s\":"), std::string::npos);
+  r = cli->Get(all);
   ASSERT_TRUE(r);
-  ASSERT_GE(r->body.size(), 8u);
-  EXPECT_EQ(r->body.substr(0, 4), "GMH1");
+  ASSERT_GE(r->body.size(), 16u);
+  EXPECT_EQ(r->body.substr(0, 4), "GMH3");
   const size_t rows = static_cast<uint8_t>(r->body[4]) |
                       (static_cast<uint8_t>(r->body[5]) << 8);
-  EXPECT_GE(rows, 8u);  // ~3 h at 15 min after the first sync
-  EXPECT_EQ(r->body.size(), 8u + rows * 20u);
-  EXPECT_EQ(cli->Get("/api/history/1y")->status, 404);
-  EXPECT_NE(cli->Get("/api/diag")->body.find("\"records\":"),
+  EXPECT_GE(rows, 2u);
+  EXPECT_EQ(r->body.size(), 16u + rows * 24u);
+  // last row carries device state: battery known, Wi-Fi RSSI after uploads
+  const uint8_t* last =
+      reinterpret_cast<const uint8_t*>(r->body.data()) + 16 + (rows - 1) * 24u;
+  EXPECT_GT(last[20] | (last[21] << 8), 2000);
+  EXPECT_LT(static_cast<int8_t>(last[22]), 0);
+  EXPECT_EQ(cli->Get("/api/history/24h")->status, 404);
+  EXPECT_EQ(cli->Get("/api/history/9/1")->status, 404);
+  EXPECT_EQ(cli->Get("/api/history/1/99999999999")->status, 404);
+  EXPECT_NE(cli->Get("/api/diag")->body.find("\"used_bytes\":"),
             std::string::npos);
 }

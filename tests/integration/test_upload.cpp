@@ -6,6 +6,7 @@
 #include <cstring>
 #include <set>
 #include <string>
+#include <vector>
 
 #include "support/test_device.h"
 
@@ -130,4 +131,32 @@ TEST(Upload, NotConfiguredDoesNotTouchNetwork) {
   t.runFor(2 * 3600);
   EXPECT_EQ(t.dev->network().connectCount(), 0u);
   EXPECT_GE(t.dev->app().state().count, 8u);
+}
+
+TEST(Upload, HistoryBackfilledAfterFirstTimeSync) {
+  TestDevice t("backfill");
+  setup(t);
+  t.runFor(2 * 900);  // 3 samples, before the first upload window
+  gm::HistoryLog& h = t.dev->app().history();
+  gm::HistoryRecord last;
+  EXPECT_FALSE(h.last(&last));  // nothing without a clock
+  t.runFor(3600);               // first upload window syncs the clock
+  std::vector<gm::HistoryRecord> recs;
+  ASSERT_TRUE(h.forEach(
+      0, 0xFFFFFFFFu,
+      [](void* ctx, const gm::HistoryRecord& r) {
+        static_cast<std::vector<gm::HistoryRecord>*>(ctx)->push_back(r);
+        return true;
+      },
+      &recs));
+  // the measurements taken before the clock was known come first, marked
+  // as a restart with reconstructed times; then live ones, in order
+  ASSERT_GE(recs.size(), 2u);
+  EXPECT_TRUE(recs[0].flags & gm::kHistRestart);
+  EXPECT_TRUE(recs[0].flags & gm::kHistReconstructed);
+  EXPECT_FALSE(recs.back().flags & gm::kHistReconstructed);
+  EXPECT_NE(recs.back().batteryMv, 0);
+  for (size_t i = 1; i < recs.size(); ++i)
+    EXPECT_GT(recs[i].epoch, recs[i - 1].epoch);
+  EXPECT_LE(recs.size(), static_cast<size_t>(t.dev->app().state().nextSeq));
 }

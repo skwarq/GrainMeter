@@ -27,7 +27,8 @@ both platforms answer identically. Sample responses: `docs/api-samples/`.
 | GET | `/api/diag` | full diagnostics: status + `config`, `rom_map`, `scan` |
 | GET | `/api/config` | configuration without secrets |
 | GET | `/api/ota` | state of the current/last firmware upload |
-| GET | `/api/history/24h`, `/7d`, `/30d` | local history (binary, below) |
+| GET | `/api/history` | local history summary (JSON, below) |
+| GET | `/api/history/<from>/<to>` | local history page (binary, below) |
 
 ### `/api/status` fields
 
@@ -82,15 +83,45 @@ Sensor `status` values: `ok`, `missing`, `crc_error`, `unsupported_family`,
 `time_syncs`, `http_sessions`,
 `probe{shorted, devices[{index, rom, present, crc_faults, temp_c}]}`.
 
-### `/api/history/<range>` (binary)
+### `/api/history` (JSON)
 
-`application/octet-stream`, little endian. Header: `"GMH1"`, `uint16 rows`,
-`uint16 points` (8). Then `rows` x 20 bytes: `uint32 epoch` (UTC s) and
-`int16 centi[8]` (°C x 100, `-32768` = no value). At most 720 rows: longer
-ranges are averaged into equal time buckets. Empty history or no valid clock:
-header only. `503` when the device has no `history` partition (older
-partition table). `/api/status` has `history{available, capacity}`,
-`/api/diag` adds `records` and `oldest_epoch`.
+```json
+{"available":true,"records":1077,"used_bytes":11626,"capacity_bytes":192512,
+ "oldest_epoch":1795000000,"newest_epoch":1797591600,
+ "last_measure_epoch":1797592500,"heartbeat_s":10800,"deadband_centi":15,
+ "max_gap_s":12600}
+```
+
+`available:false` (and `503` on the pages) when the device has no `history`
+partition. `/api/diag` contains the same object under `history`.
+
+### `/api/history/<from>/<to>` (binary)
+
+`from`, `to`: UTC epoch seconds, inclusive. The portal asks per local day.
+`application/octet-stream`, little endian.
+
+Header (16 B): `"GMH3"`, `uint16 rows`, `uint16 points` (8), `uint32 next`
+(0 = complete; otherwise more than 256 rows: request again with
+`from = next`), `uint32 max_gap` (s).
+
+Rows (24 B):
+
+| offset | type | meaning |
+|---|---|---|
+| 0 | `uint32` | epoch (UTC s) |
+| 4 | `int16[8]` | °C x 100 per point, `-32768` = no value |
+| 20 | `uint16` | battery mV (10 mV resolution), `0` = unknown |
+| 22 | `int8` | Wi-Fi RSSI dBm of the last connection, `0` = unknown |
+| 23 | `uint8` | flags: bits 0-1 power mode (0 normal, 1 economy, 2 critical, 3 unknown), bits 2-3 last upload (0 none yet, 1 ok, 2 failed), bit 4 time reconstructed, bit 5 first measurement after power-up, bit 6 held state until the last measurement |
+
+Rows are the stored changes, not every measurement: draw straight lines
+between them (the device stores the last unchanged measurement before a
+change, so lines stay within the 0.15 °C dead band). Rows further apart than
+`max_gap` (heartbeat 3 h + 2 measurement intervals) mean no data in between;
+bit 5 also starts a new line. The first row may be the last change before
+`from` (state at the range start) and the last row the held state at the last
+measurement (bit 6), so consecutive pages/days overlap by one row:
+deduplicate by time.
 
 ## Actions (POST, password required)
 
