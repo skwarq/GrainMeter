@@ -218,3 +218,16 @@ TEST_F(PortalTest, LocalHistoryForCharts) {
   EXPECT_NE(cli->Get("/api/diag")->body.find("\"used_bytes\":"),
             std::string::npos);
 }
+
+TEST_F(PortalTest, RemoteUpdateButtonsNeedPassword) {
+  EXPECT_EQ(post("/api/update/check", "", false)->status, 401);
+  EXPECT_EQ(post("/api/update/install", "", false)->status, 401);
+  ASSERT_EQ(post("/api/config", "update_url=")->status, 200);
+  auto r = post("/api/update/check", "");
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 200);
+  EXPECT_NE(r->body.find("\"ok\":false"), std::string::npos) << r->body;
+  EXPECT_NE(r->body.find("\"result\":\"failed\""), std::string::npos);
+  EXPECT_NE(r->body.find("no update URL"), std::string::npos);
+  EXPECT_NE(r->body.find("\"restarting\":false"), std::string::npos);
+}

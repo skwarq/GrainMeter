@@ -25,6 +25,10 @@ export function Update() {
   const [reply, setReply] = useState(null);
   const [countdown, setCountdown] = useState(0);
   const [running, setRunning] = useState(null);
+  const [origin, setOrigin] = useState('file'); // which card started the update
+  const [remote, setRemote] = useState('idle'); // idle|checking|installing
+  const [remoteError, setRemoteError] = useState('');
+  const fromRemote = useRef(false);
   const upload = useRef(null);
   const alive = useRef(true);
   const input = useRef(null);
@@ -63,23 +67,83 @@ export function Update() {
     while (alive.current && Date.now() - start < RECONNECT_LIMIT_S * 1000) {
       try {
         const st = await api.getStatus();
-        if (!alive.current) return;
+        if (!alive.current) return null;
         setRunning(st);
         setPhase('back');
         refresh();
-        return;
+        return st;
       } catch {
         await sleep(2000);
       }
     }
     if (alive.current) {
       setPhase('error');
-      setError(t('update.noReturn', { s: RECONNECT_LIMIT_S }));
+      const msg = t('update.noReturn', { s: RECONNECT_LIMIT_S });
+      if (fromRemote.current) setRemoteError(msg);
+      else setError(msg);
     }
+    return null;
+  };
+
+  const remoteCheck = async () => {
+    setRemoteError('');
+    setRemote('checking');
+    try {
+      await api.remoteUpdateCheck();
+    } catch (e) {
+      if (alive.current) setRemoteError(errorText(t, describeError(e)));
+    }
+    if (!alive.current) return;
+    setRemote('idle');
+    refresh();
+  };
+
+  const remoteInstall = async () => {
+    const v = s && s.remote_update ? s.remote_update.latest : '';
+    if (!window.confirm(t('remote.confirmInstall', { v }))) return;
+    setRemoteError('');
+    setRemote('installing');
+    const restarted = async (unsure) => {
+      fromRemote.current = true;
+      setOrigin('remote');
+      setReply({ version: v });
+      const st = await waitForDevice(); // shows the running version
+      // After a lost connection we only guessed that it restarted: if the old
+      // version still runs, the installation did not happen - say why.
+      if (unsure && st && st.firmware !== v) {
+        setPhase('idle');
+        const ru = st.remote_update;
+        setRemoteError(t('remote.notInstalled', { msg: (ru && ru.message) || '' }));
+      }
+    };
+    try {
+      const r = await api.remoteUpdateInstall(v);
+      if (!alive.current) return;
+      setRemote('idle');
+      if (r && r.restarting) {
+        await restarted(false);
+        return;
+      }
+      setRemoteError(r && r.message ? r.message : t('remote.failed'));
+    } catch (e) {
+      if (!alive.current) return;
+      setRemote('idle');
+      // The phone may lose the device's Wi-Fi while it downloads (the access
+      // point follows the router's channel) or the reply may come too late:
+      // the device can still be installing and restarting.
+      if (e && (e.kind === 'network' || e.kind === 'timeout')) {
+        await restarted(true);
+        return;
+      }
+      setRemoteError(errorText(t, describeError(e)));
+    }
+    refresh();
   };
 
   const start = async () => {
     if (!file) return;
+    fromRemote.current = false;
+    setOrigin('file');
     setError('');
     setReply(null);
     setProgress({ sent: 0, total: file.size });
@@ -107,8 +171,38 @@ export function Update() {
   };
 
   const pct = progress.total ? Math.round((progress.sent / progress.total) * 100) : 0;
-  const busy = phase === 'uploading' || phase === 'restarting';
+  const busy = phase === 'uploading' || phase === 'restarting' || remote !== 'idle';
   const ota = s && s.ota;
+
+  const outcome = (
+    <>
+      {phase === 'restarting' && (
+        <div class="outcome outcome-ok">
+          <span class="spinner" />
+          <div>
+            <strong>{t('update.accepted', { v: reply && reply.version ? reply.version : '?' })}</strong>
+            <p>{countdown > 0 ? t('update.restartIn', { s: countdown }) : t('update.waiting')}</p>
+          </div>
+        </div>
+      )}
+
+      {phase === 'back' && running && (
+        <div class="outcome outcome-ok">
+          <Icon name="ok" size={22} />
+          <div>
+            <strong>{t('update.back')}</strong>
+            <p>{t('update.runningVersion', { v: running.firmware })}</p>
+            {reply && reply.version && reply.version !== running.firmware && (
+              <p class="text-warn small">{t('update.versionDiffers', { v: reply.version })}</p>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+  const ru = s && s.remote_update;
+  const remoteBusy = remote !== 'idle' || busy;
+  const canInstall = ru && ru.result === 'available' && ru.latest;
 
   return (
     <div>
@@ -145,28 +239,7 @@ export function Update() {
             </div>
           )}
 
-          {phase === 'restarting' && (
-            <div class="outcome outcome-ok">
-              <span class="spinner" />
-              <div>
-                <strong>{t('update.accepted', { v: reply && reply.version ? reply.version : '?' })}</strong>
-                <p>{countdown > 0 ? t('update.restartIn', { s: countdown }) : t('update.waiting')}</p>
-              </div>
-            </div>
-          )}
-
-          {phase === 'back' && running && (
-            <div class="outcome outcome-ok">
-              <Icon name="ok" size={22} />
-              <div>
-                <strong>{t('update.back')}</strong>
-                <p>{t('update.runningVersion', { v: running.firmware })}</p>
-                {reply && reply.version && reply.version !== running.firmware && (
-                  <p class="text-warn small">{t('update.versionDiffers', { v: reply.version })}</p>
-                )}
-              </div>
-            </div>
-          )}
+          {origin === 'file' && outcome}
 
           {error && (
             <p class="result result-error" role="alert">
@@ -196,14 +269,11 @@ export function Update() {
                 [t('remote.running'), s.remote_update.running],
                 [
                   t('remote.result'),
-                  s.remote_update.enabled ? (
-                    <Badge key="r" tone={updateTone(s.remote_update.result)}>
-                      {tOr(t, 'remote.', s.remote_update.result)}
-                    </Badge>
-                  ) : (
-                    t('remote.disabled')
-                  ),
+                  <Badge key="r" tone={updateTone(s.remote_update.result)}>
+                    {tOr(t, 'remote.', s.remote_update.result)}
+                  </Badge>,
                 ],
+                [t('remote.auto'), s.remote_update.enabled ? t('remote.autoOn') : t('remote.autoOff')],
                 s.remote_update.latest && [t('remote.latest'), s.remote_update.latest],
                 s.remote_update.message && [t('common.message'), s.remote_update.message],
                 s.remote_update.last_check_age_s !== null && [
@@ -218,6 +288,50 @@ export function Update() {
                 ],
               ]}
             />
+            {remote !== 'idle' && (
+              <div class="outcome outcome-ok">
+                <span class="spinner" />
+                <div>
+                  <strong>{t(remote === 'checking' ? 'remote.checking' : 'remote.installing')}</strong>
+                  {remote === 'installing' && <p>{t('remote.installingHint')}</p>}
+                </div>
+              </div>
+            )}
+            {origin === 'remote' && outcome}
+            {remoteError && (
+              <p class="result result-error" role="alert">
+                <Icon name="warn" size={16} />
+                <span>{remoteError}</span>
+              </p>
+            )}
+            {canInstall && remote === 'idle' && phase !== 'restarting' && (
+              <p class="precheck text-ok">
+                <Icon name="download" size={16} />
+                <span>{t('remote.newer', { v: ru.latest, r: ru.running })}</span>
+              </p>
+            )}
+            <div class="row-actions">
+              <Button
+                icon="refresh"
+                disabled={!ru.url_set || remoteBusy}
+                busy={remote === 'checking'}
+                onClick={remoteCheck}
+              >
+                {t('remote.check')}
+              </Button>
+              {canInstall && (
+                <Button
+                  variant="primary"
+                  icon="download"
+                  disabled={remoteBusy}
+                  busy={remote === 'installing'}
+                  onClick={remoteInstall}
+                >
+                  {t('remote.install', { v: ru.latest })}
+                </Button>
+              )}
+            </div>
+            {!ru.url_set && <p class="muted small">{t('remote.noUrl')}</p>}
             <p class="muted small">{t('remote.note')}</p>
           </Card>
         )}

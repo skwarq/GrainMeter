@@ -50,7 +50,7 @@ void usage() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int run(int argc, char** argv) {
   gm::setLogSink(logSink);
   gmpc::PcDevice::Options opt;
   std::string host = "127.0.0.1";
@@ -151,5 +151,15 @@ int main(int argc, char** argv) {
   }
   web.stop();
   std::printf("bye\n");
-  return 0;
+  // Exit here, while `dev` still exists: the detached console thread may be
+  // using it. It may also be blocked reading stdin while holding its stdio
+  // lock, which the normal exit() cleanup would wait for until stdin closes
+  // (a terminal never does). Flush our output and skip that cleanup.
+  std::fflush(stdout);
+  std::fflush(stderr);
+  std::_Exit(0);
+}
+
+int main(int argc, char** argv) {
+  return run(argc, argv);  // returns only for usage/option errors
 }

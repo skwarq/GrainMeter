@@ -81,6 +81,107 @@ TEST_F(RemoteUpdateTest, InstallsNewerVersionAndRestarts) {
   EXPECT_TRUE(t.dev->app().state().valid());
 }
 
+TEST_F(RemoteUpdateTest, ManualCheckThenInstallFromThePortal) {
+  configure("update_check_h=0");  // periodic checks off: buttons still work
+  const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
+  publish("9.9.9", img, hexSha(img));
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    EXPECT_EQ(t.dev->app().remoteUpdateNow(false),
+              gm::RemoteUpdateResult::Available);
+  }
+  EXPECT_NE(result().find("9.9.9 available"), std::string::npos) << result();
+  EXPECT_STREQ(t.dev->app().state().updateLatest, "9.9.9");
+  EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");  // nothing downloaded
+  EXPECT_FALSE(t.dev->restartPending());
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    EXPECT_EQ(t.dev->app().remoteUpdateNow(true),
+              gm::RemoteUpdateResult::Updated);
+  }
+  EXPECT_TRUE(t.dev->restartPending());
+  EXPECT_EQ(t.dev->network().rssi(), 0);  // disconnected again
+}
+
+TEST_F(RemoteUpdateTest, ManualButtonsKeepScheduleAndServiceRequest) {
+  configure("update_check_h=24");
+  std::ofstream(t.dir + "/updates/manifest.json")
+      << "{\"service_id\":5,\"service_min\":15}";
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    t.dev->app().remoteUpdateNow(false);
+    EXPECT_FALSE(t.dev->app().state().hasUpdateCheck);  // schedule untouched
+    char st[16384];
+    gm::JsonWriter sw(st, sizeof(st));
+    t.dev->app().writeStatus(sw);
+    // ...but the portal shows when it was checked
+    EXPECT_NE(std::string(st).find("\"last_check_age_s\":0"), std::string::npos)
+        << st;
+    char buf[8192];
+    gm::JsonWriter w(buf, sizeof(buf));
+    t.dev->writePlatformJson(w, true);
+    // the technician is already on site: the request stays for later
+    EXPECT_NE(std::string(buf).find("\"service_requests\":0"),
+              std::string::npos)
+        << buf;
+  }
+  EXPECT_EQ(code(), gm::RemoteUpdateResult::UpToDate) << result();
+}
+
+TEST_F(RemoteUpdateTest, InstallOnlyTheConfirmedVersion) {
+  const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
+  publish("9.9.9", img, hexSha(img));
+  std::lock_guard<std::mutex> lock(t.dev->mutex());
+  EXPECT_EQ(t.dev->app().remoteUpdateNow(true, "9.9.8"),
+            gm::RemoteUpdateResult::Available);
+  EXPECT_NE(result().find("check again"), std::string::npos) << result();
+  EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");
+  EXPECT_FALSE(t.dev->restartPending());
+  EXPECT_EQ(t.dev->app().remoteUpdateNow(true, "9.9.9"),
+            gm::RemoteUpdateResult::Updated);
+}
+
+TEST_F(RemoteUpdateTest, ManualCheckRefusedOnCriticalBattery) {
+  sim("action=battery&value=3200");
+  const unsigned connects = t.dev->network().connectCount();
+  std::lock_guard<std::mutex> lock(t.dev->mutex());
+  EXPECT_EQ(t.dev->app().remoteUpdateNow(false),
+            gm::RemoteUpdateResult::Skipped);
+  EXPECT_EQ(t.dev->network().connectCount(), connects);
+}
+
+TEST_F(RemoteUpdateTest, StaleAvailableClearedAfterVersionChange) {
+  const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
+  publish("9.9.9", img, hexSha(img));
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    ASSERT_EQ(t.dev->app().remoteUpdateNow(false),
+              gm::RemoteUpdateResult::Available);
+    // as if the running firmware were already 9.9.9 (installed from a file)
+    std::strcpy(t.dev->app().state().updateLatest, GM_FW_VERSION);
+    t.dev->app().state().seal();
+  }
+  t.dev->requestRestart();
+  t.runFor(60);
+  EXPECT_EQ(code(), gm::RemoteUpdateResult::UpToDate) << result();
+}
+
+TEST_F(RemoteUpdateTest, ManualCheckNeedsUpdateUrl) {
+  configure("update_url=");
+  std::lock_guard<std::mutex> lock(t.dev->mutex());
+  EXPECT_EQ(t.dev->app().remoteUpdateNow(false),
+            gm::RemoteUpdateResult::Failed);
+  EXPECT_NE(
+      std::string(t.dev->app().remoteUpdateMessage()).find("no update URL"),
+      std::string::npos);
+  // a refused button press is not stored and is not a device error
+  EXPECT_EQ(code(), gm::RemoteUpdateResult::None);
+  char buf[16384];
+  gm::JsonWriter w(buf, sizeof(buf));
+  t.dev->app().writeDiag(w);
+  EXPECT_EQ(std::string(buf).find("remote update"), std::string::npos) << buf;
+}
+
 TEST_F(RemoteUpdateTest, SameVersionIsNotDownloaded) {
   const auto img = fakeImage(150000, 0x000D, "grainmeter", GM_FW_VERSION);
   publish(GM_FW_VERSION, img, hexSha(img));

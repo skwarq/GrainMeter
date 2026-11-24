@@ -363,6 +363,21 @@ export default {
   'remote.updated': 'installed',
   'remote.failed': 'failed',
   'remote.skipped': 'skipped',
+  'remote.available': 'newer available',
+  'remote.auto': 'Automatic checks',
+  'remote.autoOn': 'on',
+  'remote.autoOff': 'off',
+  'remote.check': 'Check for update',
+  'remote.checking': 'Reading the manifest (Wi-Fi)…',
+  'remote.newer': 'Version {v} is available (running {r}).',
+  'remote.install': 'Install {v}',
+  'remote.installing': 'Downloading and installing…',
+  'remote.installingHint':
+    'The device connects to Wi-Fi, downloads the image and checks the signature and SHA-256. This can take up to 2 minutes; do not switch the power off.',
+  'remote.confirmInstall':
+    'Install version {v}? The device downloads it over Wi-Fi and restarts (the portal disconnects for a moment).',
+  'remote.notInstalled': 'The connection dropped and the device still runs the previous version – not installed. {msg}',
+  'remote.noUrl': 'No update manifest URL set (Configuration → Remote update).',
   'remote.service_requested': 'remote service window',
   'diag.timeSyncs': 'Time syncs',
   'diag.httpSessions': 'HTTP sessions',
@@ -431,6 +446,9 @@ export default {
   'dash.dropped': 'Dropped samples',
   'dash.uploadFailures': 'Failed uploads',
   'dash.diagAge': 'Last report',
+  'dash.future': 'time in the future',
+  'dash.futureHint':
+    'The timestamp is later than now: the device clock is ahead, or the data came from the simulator sped up with SPEED.',
   'nav.history': 'History',
   'hist.sub': 'Temperatures stored in the device – works without Internet',
   'hist.unavailable':

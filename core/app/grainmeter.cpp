@@ -54,6 +54,12 @@ bool GrainMeter::begin() {
             "retained state invalid -> initialised (power-on or corruption)");
   }
   ++st_->wakeCount;
+  if (static_cast<RemoteUpdateResult>(st_->updateResult) ==
+          RemoteUpdateResult::Available &&
+      compareVersions(st_->updateLatest, GM_FW_VERSION) <= 0) {
+    // installed meanwhile (e.g. from a file): nothing newer to offer
+    setUpdateResult(RemoteUpdateResult::UpToDate, "running %s", GM_FW_VERSION);
+  }
   st_->seal();
   if (p_.history != nullptr && !history_.begin(p_.history)) {
     recordError("history storage unusable; local history disabled");
@@ -403,7 +409,7 @@ const LastUpload& GrainMeter::upload() {
     sendDiag(nowEpoch);
   }
   if (cfg_.remoteUpdateEnabled() && updateCheckDue(nowMono)) {
-    checkRemoteUpdate();
+    checkRemoteUpdate(true, false, "");
   }
   p_.http->endSession();
   p_.net->disconnect();
@@ -484,6 +490,8 @@ const char* remoteUpdateResultName(RemoteUpdateResult r) {
       return "skipped";
     case RemoteUpdateResult::ServiceRequested:
       return "service_requested";
+    case RemoteUpdateResult::Available:
+      return "available";
   }
   return "?";
 }
@@ -495,7 +503,7 @@ void GrainMeter::setUpdateResult(RemoteUpdateResult r, const char* fmt, ...) {
   vsnprintf(st_->updateMessage, sizeof(st_->updateMessage), fmt, ap);
   va_end(ap);
   st_->seal();
-  if (r == RemoteUpdateResult::Failed) {
+  if (r == RemoteUpdateResult::Failed && !manualRun_) {
     recordError("remote update: %s", st_->updateMessage);
   } else {
     GM_LOGI(kTag, "remote update: %s", st_->updateMessage);
@@ -506,12 +514,19 @@ namespace {
 // Streams the download into the OTA session while hashing it.
 class FirmwareSink : public DownloadSink {
  public:
-  FirmwareSink(OtaSession& ota, size_t slotSize) : ota_(ota), slot_(slotSize) {}
+  FirmwareSink(OtaSession& ota, size_t slotSize, Clock& clock,
+               uint32_t deadlineMonoS)
+      : ota_(ota), slot_(slotSize), clock_(clock), deadline_(deadlineMonoS) {}
+  bool timedOut() const { return timedOut_; }
   bool begin(size_t contentLength) override {
     return contentLength > 0 ? ota_.start(contentLength, true, "remote")
                              : ota_.start(slot_, false, "remote");
   }
   bool data(const uint8_t* bytes, size_t len) override {
+    if (clock_.monoS() > deadline_) {  // slow link: give up, retry later
+      timedOut_ = true;
+      return false;
+    }
     sha_.update(bytes, len);
     return ota_.feed(bytes, len);
   }
@@ -520,14 +535,64 @@ class FirmwareSink : public DownloadSink {
  private:
   OtaSession& ota_;
   size_t slot_;
+  Clock& clock_;
+  uint32_t deadline_;
+  bool timedOut_ = false;
   Sha256 sha_;
 };
 }  // namespace
 
-void GrainMeter::checkRemoteUpdate() {
-  st_->hasUpdateCheck = 1;
-  st_->lastUpdateCheckMonoS = p_.clock->monoS();
-  st_->seal();
+RemoteUpdateResult GrainMeter::refuseManual(RemoteUpdateResult r,
+                                            const char* msg) {
+  snprintf(manualMsg_, sizeof(manualMsg_), "%s", msg);
+  GM_LOGI(kTag, "remote update (portal): %s", manualMsg_);
+  return r;
+}
+
+RemoteUpdateResult GrainMeter::remoteUpdateNow(bool install,
+                                               const char* expect) {
+  // Refusals before the manifest is read are only answered to the portal;
+  // the stored result of the last real check stays.
+  manualMsg_[0] = '\0';
+  if (cfg_.updateUrl[0] == '\0') {
+    return refuseManual(RemoteUpdateResult::Failed, "no update URL configured");
+  }
+  if (ota_.busy()) {
+    return refuseManual(RemoteUpdateResult::Skipped,
+                        "local upload in progress");
+  }
+  powerMode_ = powerModeFor(p_.sys->batteryMv(), cfg_);
+  if (powerMode_ == PowerMode::Critical) {  // no radio at all
+    return refuseManual(RemoteUpdateResult::Skipped,
+                        "battery critical: Wi-Fi not used");
+  }
+  char err[96] = "";
+  if (!p_.net->connect(cfg_, kWifiConnectTimeoutMs, err, sizeof(err))) {
+    p_.net->disconnect();
+    char msg[96];
+    snprintf(msg, sizeof(msg), "Wi-Fi: %.80s", err);
+    return refuseManual(RemoteUpdateResult::Failed, msg);
+  }
+  if (!p_.clock->wallValid()) {
+    p_.net->syncTime(kTimeSyncTimeoutMs);  // certificate dates; not fatal
+  }
+  manualCheck_ = true;
+  manualCheckMonoS_ = p_.clock->monoS();
+  manualRun_ = true;
+  checkRemoteUpdate(install, true, expect != nullptr ? expect : "");
+  manualRun_ = false;
+  p_.http->endSession();
+  p_.net->disconnect();
+  return static_cast<RemoteUpdateResult>(st_->updateResult);
+}
+
+void GrainMeter::checkRemoteUpdate(bool install, bool manual,
+                                   const char* expect) {
+  if (!manual) {
+    st_->hasUpdateCheck = 1;
+    st_->lastUpdateCheckMonoS = p_.clock->monoS();
+    st_->seal();
+  }
   if (ota_.busy()) {
     setUpdateResult(RemoteUpdateResult::Skipped, "local upload in progress");
     return;
@@ -550,7 +615,7 @@ void GrainMeter::checkRemoteUpdate() {
     setUpdateResult(RemoteUpdateResult::Failed, "%s", err);
     return;
   }
-  if (m.serviceId != 0) {
+  if (m.serviceId != 0 && !manual) {
     char stored[16] = "";
     p_.store->get("svc_req_id", stored, sizeof(stored));
     char id[16];
@@ -571,7 +636,7 @@ void GrainMeter::checkRemoteUpdate() {
     }
   }
   if (!m.hasFirmware) {
-    if (m.serviceId == 0) {
+    if (m.serviceId == 0 || manual) {
       setUpdateResult(RemoteUpdateResult::UpToDate, "no firmware in manifest");
     }
     return;
@@ -588,19 +653,33 @@ void GrainMeter::checkRemoteUpdate() {
                     m.version);
     return;
   }
+  if (!install) {
+    setUpdateResult(RemoteUpdateResult::Available, "%s available (running %s)",
+                    m.version, GM_FW_VERSION);
+    return;
+  }
+  if (expect[0] != '\0' && strcmp(expect, m.version) != 0) {
+    // the manifest changed since the user saw it: let them check again
+    setUpdateResult(RemoteUpdateResult::Available,
+                    "%s available now (not %.32s); check again", m.version,
+                    expect);
+    return;
+  }
   if (powerMode_ != PowerMode::Normal) {
     setUpdateResult(RemoteUpdateResult::Skipped, "%s available, battery low",
                     m.version);
     return;
   }
   GM_LOGI(kTag, "downloading firmware %s", m.version);
-  FirmwareSink sink(ota_, p_.ota->slotSize());
+  FirmwareSink sink(ota_, p_.ota->slotSize(), *p_.clock,
+                    p_.clock->monoS() + kFirmwareDownloadTotalS);
   const HttpResult d =
       p_.http->download(m.url, kFirmwareDownloadTimeoutMs, sink);
   if (!d.transportOk || d.status != 200 || !ota_.busy()) {
-    const char* why = ota_.error()[0] != '\0' ? ota_.error()
-                      : d.transportOk         ? "HTTP error"
-                                              : d.error;
+    const char* why = sink.timedOut()           ? "took too long"
+                      : ota_.error()[0] != '\0' ? ota_.error()
+                      : d.transportOk           ? "HTTP error"
+                                                : d.error;
     ota_.abort("download failed");
     setUpdateResult(RemoteUpdateResult::Failed, "download %s: %s (HTTP %d)",
                     m.version, why, d.status);
@@ -897,14 +976,28 @@ void GrainMeter::writeRemoteUpdate(JsonWriter& w) {
   w.key("remote_update")
       .beginObject()
       .kvb("enabled", cfg_.remoteUpdateEnabled())
+      .kvb("url_set", cfg_.updateUrl[0] != '\0')
       .kv("running", GM_FW_VERSION)
       .kv("latest", st_->updateLatest)
       .kv("result", remoteUpdateResultName(r))
       .kv("message", st_->updateMessage)
       .kv("rejected", p_.sys->rejectedFirmware());
+  // the more recent of the periodic and the manual check
+  const uint32_t now = p_.clock->monoS();
+  bool have = false;
+  uint32_t age = 0;
+  if (st_->hasUpdateCheck && now >= st_->lastUpdateCheckMonoS) {
+    have = true;
+    age = now - st_->lastUpdateCheckMonoS;
+  }
+  if (manualCheck_ && now >= manualCheckMonoS_ &&
+      (!have || now - manualCheckMonoS_ < age)) {
+    have = true;
+    age = now - manualCheckMonoS_;
+  }
   w.key("last_check_age_s");
-  if (st_->hasUpdateCheck) {
-    w.unum(p_.clock->monoS() - st_->lastUpdateCheckMonoS);
+  if (have) {
+    w.unum(age);
   } else {
     w.null();
   }

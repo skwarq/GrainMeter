@@ -199,6 +199,21 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
         .kv("http_status", static_cast<int64_t>(L.httpStatus));
     w.kvu("samples_confirmed", L.samplesConfirmed).endObject();
     reply(r, 200);
+  } else if (is(req, "POST", "/api/update/check") ||
+             is(req, "POST", "/api/update/install")) {
+    const bool install = strcmp(req.path, "/api/update/install") == 0;
+    char expect[33] = "";
+    form.get("version", expect, sizeof(expect));
+    const RemoteUpdateResult res = app_.remoteUpdateNow(install, expect);
+    JsonWriter w(out_, sizeof(out_));
+    w.beginObject()
+        .kvb("ok", res != RemoteUpdateResult::Failed)
+        .kv("result", remoteUpdateResultName(res))
+        .kv("message", app_.remoteUpdateMessage())
+        .kvb("restarting", res == RemoteUpdateResult::Updated)
+        .endObject();
+    reply(r, 200);
+    r->restartAfter = res == RemoteUpdateResult::Updated;
   } else if (is(req, "POST", "/api/map")) {
     char rom[40];
     long point = 0;

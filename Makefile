@@ -4,6 +4,7 @@
 #
 #   make            PC build + tests (same as `cmake --workflow --preset dev`)
 #   make run        start the PC simulator with the portal on :8080
+#   make run-tls    the same with HTTPS (real ThingSpeak, GitHub updates), SPEED=1
 #   make check      everything CI runs for Linux: format, tests, valgrind, firmware
 #   make firmware   ESP32-C6 firmware in espressif/idf:v6.1.1 -> firmware/dist/
 #   make frontend   portal UI (frontend/) -> portal/index.html(.gz)
@@ -34,13 +35,13 @@ else
   IMAGE_DEP =
 endif
 
-.PHONY: all pc test test-tls run valgrind format format-check firmware frontend check ci clean dev-image help \
+.PHONY: all pc test test-tls run run-tls valgrind format format-check firmware frontend check ci clean dev-image help \
         flash flash-release monitor device-config provision provision-sim setup-board
 
 all: test
 
 help:
-	@sed -n '1,23p' Makefile
+	@sed -n '/^#/!q;p' Makefile
 
 dev-image:
 	@docker image inspect $(DEV_IMAGE) >/dev/null 2>&1 || \
@@ -77,6 +78,23 @@ ifeq ($(USE_DOCKER),1)
 else
 	cmake --preset dev && cmake --build --preset dev
 	build/dev/pc/grainmeter_pc --port $(PORT) --speed $(SPEED) --data-dir pc-data
+endif
+
+# HTTPS build (OpenSSL): needed for api.thingspeak.com and update manifests
+# on GitHub; same data dir, so `make provision-sim` settings apply.
+# Real services see the simulator's timestamps: real-time speed by default
+# (SPEED=60 on the command line still wins).
+run-tls: SPEED = 1
+run-tls: $(IMAGE_DEP)
+ifeq ($(USE_DOCKER),1)
+	$(RUN) cmake --preset dev-tls
+	$(RUN) cmake --build --preset dev-tls
+	docker run --rm -it -p 127.0.0.1:$(PORT):8080 -v "$(CURDIR):$(CURDIR)" -w "$(CURDIR)" \
+		-u "$$(id -u):$$(id -g)" $(DEV_IMAGE) build/docker-dev-tls/pc/grainmeter_pc --bind 0.0.0.0 \
+		--port 8080 --speed $(SPEED) --data-dir pc-data
+else
+	cmake --preset dev-tls && cmake --build --preset dev-tls
+	build/dev-tls/pc/grainmeter_pc --port $(PORT) --speed $(SPEED) --data-dir pc-data
 endif
 
 firmware:

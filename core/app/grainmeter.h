@@ -29,6 +29,9 @@ enum {
   kHttpTimeoutMs = 15000,
   kMaxUploadBatch = kBufferCapacity,   // << 960 (ThingSpeak free limit)
   kFirmwareDownloadTimeoutMs = 30000,  // per network operation
+  // Whole download; with Wi-Fi, time sync and manifest it stays below the
+  // portal's 240 s wait for the install button.
+  kFirmwareDownloadTotalS = 150,
 };
 
 enum class RemoteUpdateResult : uint8_t {
@@ -38,6 +41,7 @@ enum class RemoteUpdateResult : uint8_t {
   Failed = 3,    // manifest/download/verification error (see message)
   Skipped = 4,   // version previously rolled back, or low battery
   ServiceRequested = 5,
+  Available = 6,  // newer version found by a check without installation
 };
 const char* remoteUpdateResultName(RemoteUpdateResult r);
 
@@ -95,6 +99,15 @@ class GrainMeter {
   RetainedState& state() { return *st_; }
   OtaSession& ota() { return ota_; }
   HistoryLog& history() { return history_; }
+  // Portal action: connects Wi-Fi now, reads the update manifest and, with
+  // install, downloads/verifies/installs a newer version (restart requested
+  // on success). Works also with periodic checks off (update URL needed).
+  RemoteUpdateResult remoteUpdateNow(bool install, const char* expect = "");
+  // Message for the portal reply: a refusal before any network access
+  // (not stored, the last real check result stays) or the check result.
+  const char* remoteUpdateMessage() const {
+    return manualMsg_[0] != '\0' ? manualMsg_ : st_->updateMessage;
+  }
   // Wall-clock time of the last measurement (0 = unknown).
   uint32_t lastMeasureEpoch() const;
   // Rows of the local history further apart than this = no data between.
@@ -121,7 +134,11 @@ class GrainMeter {
   bool diagDue(uint32_t nowMono) const;
   bool updateCheckDue(uint32_t nowMono) const;
   void sendDiag(uint32_t nowEpoch);
-  void checkRemoteUpdate();
+  // install = false: only reads the manifest and reports what is available.
+  // manual (portal buttons): does not touch the periodic schedule and does
+  // not consume a remote service request (the technician is already here);
+  // expect = version the user confirmed ("" = any newer).
+  void checkRemoteUpdate(bool install, bool manual, const char* expect);
   void setUpdateResult(RemoteUpdateResult r, const char* fmt, ...)
 #if defined(__GNUC__)
       __attribute__((format(printf, 3, 4)))
@@ -144,6 +161,14 @@ class GrainMeter {
   bool haveMeasure_;
   bool configOk_;
   bool stateRecovered_;
+  // Last manual check from the portal (display only; RAM is enough, the
+  // device stays awake in service mode). The periodic schedule uses
+  // st_->lastUpdateCheckMonoS.
+  bool manualCheck_ = false;
+  uint32_t manualCheckMonoS_ = 0;
+  bool manualRun_ = false;  // failures of a button press are not device errors
+  char manualMsg_[96] = "";
+  RemoteUpdateResult refuseManual(RemoteUpdateResult r, const char* msg);
   PowerMode powerMode_;
   OtaSession ota_;
   HistoryLog history_;

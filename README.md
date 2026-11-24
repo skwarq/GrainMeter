@@ -61,6 +61,7 @@ Albo przez Makefile – domyślnie wszystko w Dockerze (wymagany tylko Docker):
 ```bash
 make            # build + testy w obrazie docker/dev.Dockerfile
 make run        # symulator, portal na http://127.0.0.1:8080/
+make run-tls    # to samo z HTTPS (prawdziwy ThingSpeak, aktualizacje z GitHub)
 make check      # to co CI na Linuksie: format, testy, Valgrind, firmware
 make USE_DOCKER=0 test   # narzędzia z hosta, te same presety
 ```
@@ -97,7 +98,9 @@ i w symulatorze `set report_url http://127.0.0.1:8090`
 są weryfikowane jak na ESP32):
 
 ```bash
-cmake --workflow --preset dev-tls            # albo: make test-tls (Docker)
+make run-tls                                  # Docker: build z TLS + symulator na :8080
+# albo bez Dockera:
+cmake --workflow --preset dev-tls             # (make test-tls = same testy w Dockerze)
 build/dev-tls/pc/grainmeter_pc --speed 60 --data-dir pc-data
 ```
 
@@ -461,6 +464,12 @@ Ustaw `update_url` (manifest JSON przez HTTPS) i `update_check_h`
 - `service_id` (opcjonalnie): każde nowe id otwiera portal serwisowy na
   `service_min` minut (1–60) przy najbliższym oknie wysyłki – zdalne
   „przyjdź do silosu” bez wizyty z przyciskiem.
+- Ręcznie z portalu (Aktualizacja → Zdalna aktualizacja): **Sprawdź
+  dostępność** łączy Wi-Fi i czyta manifest bez pobierania obrazu; gdy jest
+  nowsza wersja, pojawia się przycisk **Zainstaluj &lt;wersja&gt;**, który
+  pobiera, weryfikuje i instaluje ją od razu, a portal czeka na powrót
+  urządzenia. Działa też przy wyłączonym automatycznym sprawdzaniu
+  (`update_check_h=0`), wystarczy `update_url`.
 - Publikacja: wrzuć plik `grainmeter-<wersja>-esp32c6-ota.bin` z CI i manifest
   na serwer HTTPS; `sha256sum` pliku wpisz do manifestu.
 

@@ -364,6 +364,21 @@ export default {
   'remote.failed': 'błąd',
   'remote.skipped': 'pominięto',
   'remote.service_requested': 'zdalne okno serwisowe',
+  'remote.available': 'dostępna nowsza',
+  'remote.auto': 'Automatyczne sprawdzanie',
+  'remote.autoOn': 'włączone',
+  'remote.autoOff': 'wyłączone',
+  'remote.check': 'Sprawdź dostępność',
+  'remote.checking': 'Sprawdzanie manifestu (Wi-Fi)…',
+  'remote.newer': 'Dostępna wersja {v} (uruchomiona {r}).',
+  'remote.install': 'Zainstaluj {v}',
+  'remote.installing': 'Pobieranie i instalowanie…',
+  'remote.installingHint':
+    'Urządzenie łączy się z Wi-Fi, pobiera obraz i sprawdza podpis oraz SHA-256. To może potrwać do 2 minut; nie wyłączaj zasilania.',
+  'remote.confirmInstall':
+    'Zainstalować wersję {v}? Urządzenie pobierze ją przez Wi-Fi i uruchomi się ponownie (portal na chwilę się rozłączy).',
+  'remote.notInstalled': 'Połączenie zerwane, a urządzenie dalej ma poprzednią wersję – nie zainstalowano. {msg}',
+  'remote.noUrl': 'Brak adresu manifestu aktualizacji (Konfiguracja → Zdalna aktualizacja).',
   'diag.timeSyncs': 'Synchronizacje czasu',
   'diag.httpSessions': 'Sesje HTTP',
   'diag.serviceRequests': 'Zdalne okna serwisowe',
@@ -431,6 +446,9 @@ export default {
   'dash.dropped': 'Utracone próbki',
   'dash.uploadFailures': 'Nieudane wysyłki',
   'dash.diagAge': 'Ostatni raport',
+  'dash.future': 'czas w przyszłości',
+  'dash.futureHint':
+    'Znacznik czasu jest późniejszy niż teraz: zegar urządzenia się spieszy albo dane wysłał symulator przyspieszony parametrem SPEED.',
   'nav.history': 'Historia',
   'hist.sub': 'Temperatury zapisane w urządzeniu – działa bez Internetu',
   'hist.unavailable':

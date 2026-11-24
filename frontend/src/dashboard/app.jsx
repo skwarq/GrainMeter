@@ -124,6 +124,7 @@ export function App() {
   const feed = state.main;
   const lastEntry = feed && feed.entries[feed.entries.length - 1];
   const ageS = lastEntry ? Math.max(0, Math.round((now - lastEntry.t) / 1000)) : null;
+  const future = lastEntry ? isFuture(lastEntry.t, now) : false;
   const alerts = feed ? findAlerts(feed, settings, now) : [];
   const stale = alerts.some((a) => a.kind === 'stale');
 
@@ -138,7 +139,9 @@ export function App() {
               {lastEntry ? (
                 <>
                   {t('dash.lastMeasurement')}{' '}
-                  <Badge tone={stale ? 'warn' : 'ok'}>{t('common.ago', { age: formatDuration(ageS) })}</Badge>{' '}
+                  <Badge tone={stale || future ? 'warn' : 'ok'} title={future ? t('dash.futureHint') : undefined}>
+                    {future ? t('dash.future') : t('common.ago', { age: formatDuration(ageS) })}
+                  </Badge>{' '}
                   <span class="dash-time">
                     {new Date(lastEntry.t).toLocaleString(lang === 'en' ? 'en-GB' : 'pl-PL')}
                   </span>
@@ -213,6 +216,13 @@ function LangSwitch() {
   );
 }
 
+// Timestamps come from the device clock; the PC simulator's clock runs
+// SPEED times faster, so its reports can lie ahead of the real time.
+const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
+function isFuture(tMs, nowMs) {
+  return tMs - nowMs > FUTURE_TOLERANCE_MS;
+}
+
 function DeviceCard({ diag, error, t, now, range }) {
   if (error) {
     return (
@@ -257,7 +267,16 @@ function DeviceCard({ diag, error, t, now, range }) {
           [t('dash.dropped'), d.dropped === null ? '—' : d.dropped],
           [t('dash.uploadFailures'), d.uploadFailures === null ? '—' : d.uploadFailures],
           d.firmware && [t('common.firmware'), d.firmware],
-          [t('dash.diagAge'), t('common.ago', { age: formatDuration(Math.round((now - d.t) / 1000)) })],
+          [
+            t('dash.diagAge'),
+            isFuture(d.t, now) ? (
+              <Badge key="fut" tone="warn" title={t('dash.futureHint')}>
+                {t('dash.future')}
+              </Badge>
+            ) : (
+              t('common.ago', { age: formatDuration(Math.max(0, Math.round((now - d.t) / 1000))) })
+            ),
+          ],
         ]}
       />
       <DeviceCharts

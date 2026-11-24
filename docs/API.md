@@ -44,9 +44,10 @@ a platform object: `sim` on PC, `esp` on the ESP32.
 `null`), `low_mv`, `crit_mv` (0 = threshold disabled). Economy: uploads 4x
 less often. Critical: no radio at all, measuring interval doubled.
 
-`remote_update`: `enabled`, `running` (version), `latest` (from the
-manifest, "" if never seen), `result` (`never_checked`, `up_to_date`,
-`updated`, `failed`, `skipped`, `service_requested`), `message`,
+`remote_update`: `enabled` (periodic checks), `url_set` (manual check
+possible), `running` (version), `latest` (from the manifest, "" if never
+seen), `result` (`never_checked`, `up_to_date`, `available`, `updated`,
+`failed`, `skipped`, `service_requested`), `message`,
 `rejected` (version rolled back after a failed first start; never retried),
 `last_check_age_s` (or `null`).
 
@@ -132,6 +133,8 @@ deduplicate by time.
 | `/api/scan` | – | Search ROM; returns `/api/diag` |
 | `/api/measure` | `store` (optional) | read all sensors; returns `/api/status` |
 | `/api/upload` | – | one upload window now: `{ok,message,http_status,samples_confirmed}` |
+| `/api/update/check` | – | connect Wi-Fi, read the update manifest now (no download): `{ok,result,message,restarting:false}`; `result` `available` when newer |
+| `/api/update/install` | `version` (optional) | as check, then download, verify and install a newer version: `{ok,result,message,restarting}`; the device restarts after the reply when `restarting`. With `version`, only that version is installed (a changed manifest gives `available` + "check again"). Manual checks do not move the periodic schedule, do not consume a `service_id` request and are refused in critical power mode. |
 | `/api/map` | `rom`, `point` (1..8), `height_cm` (optional, -1..32767) | assign sensor to point |
 | `/api/unmap` | `rom` | remove assignment |
 | `/api/automap` | – | assign unmapped sensors to free points (ROM order) |

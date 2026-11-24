@@ -213,6 +213,9 @@ export async function getHistoryPage(from, to, signal) {
 export const scan = () => post('/api/scan', null, SLOW_TIMEOUT_MS);
 export const measure = (store) => post('/api/measure', store ? { store: 1 } : null, SLOW_TIMEOUT_MS);
 export const uploadNow = () => post('/api/upload', null, 90000);
+/** Remote update: read the manifest now / download, verify and install. */
+export const remoteUpdateCheck = () => post('/api/update/check', null, 60000);
+export const remoteUpdateInstall = (version) => post('/api/update/install', { version }, 240000);
 export const mapSensor = (rom, point, heightCm) =>
   post('/api/map', { rom, point, height_cm: heightCm === null || heightCm === '' ? undefined : heightCm });
 export const unmapSensor = (rom) => post('/api/unmap', { rom });

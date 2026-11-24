@@ -18,6 +18,7 @@ export function updateTone(result) {
       return 'danger';
     case 'skipped':
     case 'service_requested':
+    case 'available':
       return 'warn';
     default:
       return 'neutral';
