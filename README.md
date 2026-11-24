@@ -644,7 +644,7 @@ dopisywane po pierwszej wysyłce (czas odtworzony, oznaczony restart po
 włączeniu – wykres przerywa wtedy linię). W symulatorze historia jest w
 `pc-data/history.bin`; symulator startuje z zegarem komputera, więc historia
 działa od razu (`--no-time` = jak świeże ESP32 bez czasu). Historia zapisana
-przez 0.2.x (inny format) jest pomijana i nadpisywana po kolei.
+przez 0.2.0 (inny format) jest pomijana i nadpisywana po kolei.
 
 Dashboard (GitHub Pages) pokazuje baterię i sygnał z kanału diagnostycznego
 (raport co 6 h).

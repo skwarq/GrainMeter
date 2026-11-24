@@ -10,7 +10,7 @@ namespace gm {
 
 static const char* kTag = "history";
 
-// Format v3 (variable length). Older formats (0.2.x: 32-byte records
+// Format v3 (variable length). Older formats (0.2.0: 32-byte records
 // starting with "GH" or 0xA2) are not recognised: their sectors are erased
 // as the log reaches them.
 //
