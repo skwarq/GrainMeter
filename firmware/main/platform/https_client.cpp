@@ -60,7 +60,10 @@ esp_http_client_handle_t HttpsClient::prepare(const char* url,
     cfg.crt_bundle_attach = esp_crt_bundle_attach;  // verification ON
     cfg.disable_auto_redirect = true;
     cfg.keep_alive_enable = true;
-    cfg.buffer_size = 2048;
+    // GitHub release redirects: a 4.2 KB Content-Security-Policy header on
+    // github.com and a ~900 character signed URL to release-assets.
+    cfg.buffer_size = 8192;     // response headers
+    cfg.buffer_size_tx = 2048;  // request line + headers
     client_ = esp_http_client_init(&cfg);
     if (client_ == nullptr) {
       snprintf(res->error, sizeof(res->error), "client init failed");
@@ -146,7 +149,7 @@ int64_t HttpsClient::openGet(esp_http_client_handle_t c, gm::HttpResult* res) {
       snprintf(res->error, sizeof(res->error), "redirect without Location");
       return -1;
     }
-    static char next[512];  // single HTTP user (upload window)
+    static char next[2048];  // single HTTP user (upload window)
     next[0] = '\0';
     esp_http_client_get_url(c, next, sizeof(next));
     if (std::strncmp(next, "https://", 8) != 0) {

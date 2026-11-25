@@ -12,6 +12,19 @@
 
 static volatile int64_t s_lastLineUs = 0;
 
+// The driver's ring buffer rejects a write larger than its TX buffer as a
+// whole (status/diag JSON is several KB), so send in chunks and follow
+// partial writes.
+static void writeAll(const char* p, size_t n) {
+  while (n > 0) {
+    const size_t chunk = n > 256 ? 256 : n;
+    const int w = usb_serial_jtag_write_bytes(p, chunk, pdMS_TO_TICKS(100));
+    if (w <= 0) return;  // host not reading: drop the rest
+    p += w;
+    n -= static_cast<size_t>(w);
+  }
+}
+
 static void writeOut(void*, const char* text) {
   // Convert \n to \r\n for terminals.
   const char* p = text;
@@ -19,9 +32,9 @@ static void writeOut(void*, const char* text) {
     const char* nl = std::strchr(p, '\n');
     const size_t n =
         nl != nullptr ? static_cast<size_t>(nl - p) : std::strlen(p);
-    if (n > 0) usb_serial_jtag_write_bytes(p, n, pdMS_TO_TICKS(100));
+    writeAll(p, n);
     if (nl == nullptr) break;
-    usb_serial_jtag_write_bytes("\r\n", 2, pdMS_TO_TICKS(100));
+    writeAll("\r\n", 2);
     p = nl + 1;
   }
 }
