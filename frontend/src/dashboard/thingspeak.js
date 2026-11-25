@@ -15,14 +15,17 @@ export class FeedError extends Error {
   }
 }
 
-/** Loads entries of one channel newer than startMs. */
-export async function loadFeed({ channelId, readKey, startMs }) {
+/**
+ * Loads entries of one channel newer than startMs, or (startMs omitted) the
+ * newest `results` entries whatever their age.
+ */
+export async function loadFeed({ channelId, readKey, startMs, results = 8000 }) {
   const q = new URLSearchParams({
-    results: '8000',
+    results: String(results),
     status: 'true',
     timezone: 'Etc/UTC',
-    start: thingSpeakTime(startMs),
   });
+  if (startMs !== undefined) q.set('start', thingSpeakTime(startMs));
   if (readKey) q.set('api_key', readKey);
   const url = `${API_BASE}/channels/${encodeURIComponent(channelId)}/feeds.json?${q}`;
   const ctl = new AbortController();

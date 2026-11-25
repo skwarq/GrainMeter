@@ -52,9 +52,10 @@ void WifiLink::onEvent(void* arg, esp_event_base_t base, int32_t id,
 
 esp_err_t WifiLink::applyMode() {
   wifi_mode_t mode = WIFI_MODE_NULL;
-  if (staWanted_ && apRunning_) {
+  const bool sta = staWanted_ || scanning_;
+  if (sta && apRunning_) {
     mode = WIFI_MODE_APSTA;
-  } else if (staWanted_) {
+  } else if (sta) {
     mode = WIFI_MODE_STA;
   } else if (apRunning_) {
     mode = WIFI_MODE_AP;
@@ -118,6 +119,16 @@ bool WifiLink::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
     snprintf(err, errCap, "Wi-Fi SSID not configured");
     return false;
   }
+  if (connected_ && std::strcmp(staSsid_, cfg.wifiSsid) == 0) {
+    return true;  // link kept for the LAN portal
+  }
+  if (connected_) {
+    // Kept link to another network (portal join test): leave it first.
+    xEventGroupClearBits(events_, kFailed);
+    esp_wifi_disconnect();
+    xEventGroupWaitBits(events_, kFailed, pdTRUE, pdFALSE, pdMS_TO_TICKS(2000));
+    connected_ = false;
+  }
   if (applyStaticIp(sta_, cfg) != ESP_OK) {
     snprintf(err, errCap, "invalid static IP configuration");
     return false;
@@ -162,9 +173,15 @@ bool WifiLink::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
         std::memcpy(s_apCache.bssid, ap.bssid, sizeof(s_apCache.bssid));
         s_apCache.channel = ap.primary;
       }
-      ESP_LOGI(kTag, "connected to '%s' (ch %d%s%s), RSSI %d dBm", cfg.wifiSsid,
-               ap.primary, useCache ? ", cached AP" : "",
-               cfg.staticIpEnabled() ? ", static IP" : "", rssi());
+      std::snprintf(staSsid_, sizeof(staSsid_), "%s", cfg.wifiSsid);
+      esp_netif_ip_info_t info = {};
+      ip_[0] = '\0';
+      if (esp_netif_get_ip_info(sta_, &info) == ESP_OK) {
+        std::snprintf(ip_, sizeof(ip_), IPSTR, IP2STR(&info.ip));
+      }
+      ESP_LOGI(kTag, "connected to '%s' (ch %d%s%s), RSSI %d dBm, IP %s",
+               cfg.wifiSsid, ap.primary, useCache ? ", cached AP" : "",
+               cfg.staticIpEnabled() ? ", static IP" : "", rssi(), ip_);
       return true;
     }
     if (useCache) {
@@ -176,23 +193,99 @@ bool WifiLink::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
     }
     vTaskDelay(pdMS_TO_TICKS(500));  // retry until the deadline
   }
-  snprintf(err, errCap, "no connection to '%.32s' within %lu s (reason %d)",
-           cfg.wifiSsid, static_cast<unsigned long>(timeoutMs / 1000u),
-           lastReason_);
-  disconnect();
+  switch (lastReason_) {
+    case WIFI_REASON_NO_AP_FOUND:
+      snprintf(err, errCap, "network '%.32s' not found (2.4 GHz only)",
+               cfg.wifiSsid);
+      break;
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_MIC_FAILURE:
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+      snprintf(err, errCap, "wrong Wi-Fi password for '%.32s' (reason %d)",
+               cfg.wifiSsid, lastReason_);
+      break;
+    default:
+      snprintf(err, errCap, "no connection to '%.32s' within %lu s (reason %d)",
+               cfg.wifiSsid, static_cast<unsigned long>(timeoutMs / 1000u),
+               lastReason_);
+      break;
+  }
+  dropStation();
   return false;
 }
 
-void WifiLink::disconnect() {
+void WifiLink::dropStation() {
   if (staWanted_) {
     esp_wifi_disconnect();
   }
   staWanted_ = false;
   connected_ = false;
+  staSsid_[0] = '\0';
+  ip_[0] = '\0';
   applyMode();
 }
 
+void WifiLink::disconnect() {
+  if (keepSta_ && connected_) {
+    return;  // LAN portal keeps using the link
+  }
+  dropStation();
+}
+
+void WifiLink::setKeepStation(bool keep) {
+  keepSta_ = keep;
+  if (!keep) {
+    dropStation();
+  }
+}
+
+const char* WifiLink::ipText() { return connected_ ? ip_ : ""; }
+
+int WifiLink::scan(gm::WifiNetwork* out, int max) {
+  scanning_ = true;
+  if (applyMode() != ESP_OK) {
+    scanning_ = false;
+    applyMode();
+    return 0;
+  }
+  wifi_scan_config_t sc = {};
+  sc.show_hidden = false;
+  esp_err_t err = esp_wifi_scan_start(&sc, true);  // blocks ~2-3 s
+  int n = 0;
+  if (err == ESP_OK) {
+    static wifi_ap_record_t recs[40];  // static: HTTP task stack is small
+    uint16_t count = static_cast<uint16_t>(max < 40 ? max : 40);
+    if (esp_wifi_scan_get_ap_records(&count, recs) == ESP_OK) {
+      for (uint16_t i = 0; i < count; ++i) {
+        std::snprintf(out[n].ssid, sizeof(out[n].ssid), "%s",
+                      reinterpret_cast<const char*>(recs[i].ssid));
+        out[n].rssi = recs[i].rssi;
+        out[n].channel = recs[i].primary;
+        out[n].secure = recs[i].authmode != WIFI_AUTH_OPEN;
+        ++n;
+      }
+    }
+  } else {
+    ESP_LOGW(kTag, "scan failed: %s", esp_err_to_name(err));
+    esp_wifi_clear_ap_list();
+  }
+  scanning_ = false;
+  applyMode();
+  ESP_LOGI(kTag, "scan: %d network(s)", n);
+  return n;
+}
+
 bool WifiLink::syncTime(uint32_t timeoutMs) {
+  {
+    esp_netif_dns_info_t dns = {};
+    esp_netif_get_dns_info(sta_, ESP_NETIF_DNS_MAIN, &dns);
+    esp_netif_t* def = esp_netif_get_default_netif();
+    ESP_LOGI(kTag, "sntp: default netif %s, sta dns " IPSTR,
+             def != nullptr ? esp_netif_get_desc(def) : "none",
+             IP2STR(&dns.ip.u_addr.ip4));
+  }
   esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
   if (esp_netif_sntp_init(&cfg) != ESP_OK) {
     return false;
@@ -225,9 +318,17 @@ esp_err_t WifiLink::startAp(const char* ssid, const char* password,
   std::strncpy(reinterpret_cast<char*>(wc.ap.password), password,
                sizeof(wc.ap.password));
   wc.ap.channel = channel;
-  wc.ap.max_connection = 2;
-  wc.ap.authmode = WIFI_AUTH_WPA2_PSK;
-  wc.ap.pmf_cfg.capable = true;
+  wc.ap.max_connection = 4;
+  const bool open = password == nullptr || password[0] == '\0';
+  wc.ap.authmode = open ? WIFI_AUTH_OPEN : WIFI_AUTH_WPA2_PSK;
+  wc.ap.pmf_cfg.capable = !open;
+  // DHCP option 114 (RFC 8910): Android 11+ / iOS 14+ learn the portal
+  // address from the lease and open it without probing.
+  static char portalUri[] = "http://192.168.4.1/";
+  esp_netif_dhcps_stop(ap_);
+  esp_netif_dhcps_option(ap_, ESP_NETIF_OP_SET, ESP_NETIF_CAPTIVEPORTAL_URI,
+                         portalUri, std::strlen(portalUri));
+  esp_netif_dhcps_start(ap_);
   apRunning_ = true;
   esp_err_t err = applyMode();
   if (err == ESP_OK) {
@@ -251,4 +352,22 @@ int WifiLink::apClients() {
     return 0;
   }
   return list.num;
+}
+
+void WifiLink::writeJson(gm::JsonWriter& w) {
+  w.key("station").beginObject().kvb("connected", connected_);
+  wifi_ap_record_t ap = {};
+  if (connected_ && esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+    char bssid[18];
+    std::snprintf(bssid, sizeof(bssid), "%02x:%02x:%02x:%02x:%02x:%02x",
+                  ap.bssid[0], ap.bssid[1], ap.bssid[2], ap.bssid[3],
+                  ap.bssid[4], ap.bssid[5]);
+    w.kv("ssid", staSsid_)
+        .kv("ip", ip_)
+        .kvu("channel", ap.primary)
+        .kv("bssid", bssid)
+        .kv("rssi", static_cast<int64_t>(ap.rssi))
+        .kvb("kept_for_lan", keepSta_);
+  }
+  w.endObject();
 }

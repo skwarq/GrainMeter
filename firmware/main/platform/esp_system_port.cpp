@@ -4,13 +4,21 @@
 #include <cstdio>
 #include <cstring>
 
+#include "driver/temperature_sensor.h"
+#include "esp_app_desc.h"
+#include "esp_core_dump.h"
 #include "esp_heap_caps.h"
 #include "esp_ota_ops.h"
 #include "esp_sleep.h"
 #include "esp_system.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "hw/battery.h"
+#include "nvs.h"
 #include "platform/wifi_link.h"
 #include "sdkconfig.h"
+#include "service/udp_log.h"
 
 static const char* resetName(esp_reset_reason_t r) {
   switch (r) {
@@ -59,6 +67,17 @@ void EspSystemPort::init(WifiLink* wifi) {
     wake_ = "deep sleep (other)";
   }
   coldBoot = rr != ESP_RST_DEEPSLEEP;
+  // Boot counter (cold starts only, not deep sleep wakes), like WIFI_RS.
+  nvs_handle_t h;
+  if (nvs_open("gm_diag", NVS_READWRITE, &h) == ESP_OK) {
+    nvs_get_u32(h, "boots", &bootCount_);
+    if (coldBoot) {
+      ++bootCount_;
+      nvs_set_u32(h, "boots", bootCount_);
+      nvs_commit(h);
+    }
+    nvs_close(h);
+  }
   // An image that failed its first start (rollback) must not be installed
   // again by the remote update.
   const esp_partition_t* invalid = esp_ota_get_last_invalid_partition();
@@ -122,8 +141,116 @@ void EspSystemPort::writePlatformJson(gm::JsonWriter& w, bool detailed) {
   if (detailed) {
     w.kvu("min_free_heap", esp_get_minimum_free_heap_size());
     w.kv("idf", esp_get_idf_version());
+    writeDetails(w);
   }
   w.endObject();
+}
+
+// Chip temperature (die, not ambient: Wi-Fi and CPU warm it up).
+static bool chipTempC(float* out) {
+  static temperature_sensor_handle_t s_ts = nullptr;
+  if (s_ts == nullptr) {
+    temperature_sensor_config_t c = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+    if (temperature_sensor_install(&c, &s_ts) != ESP_OK ||
+        temperature_sensor_enable(s_ts) != ESP_OK) {
+      s_ts = nullptr;
+      return false;
+    }
+  }
+  return temperature_sensor_get_celsius(s_ts, out) == ESP_OK;
+}
+
+// WIFI_RS style diagnostics: uptime, boots, build, chip temperature, heap,
+// FreeRTOS tasks, station link, UDP log counters, last crash.
+void EspSystemPort::writeDetails(gm::JsonWriter& w) {
+  const esp_app_desc_t* app = esp_app_get_description();
+  char build[40];
+  snprintf(build, sizeof(build), "%s %s", app->date, app->time);
+  w.kvu("uptime_s", static_cast<uint32_t>(esp_timer_get_time() / 1000000))
+      .kvu("boot_count", bootCount_)
+      .kv("build", build);
+  float t = 0;
+  if (chipTempC(&t)) {
+    w.key("chip_temp_c").centi(static_cast<int32_t>(t * 100.0f));
+  } else {
+    w.key("chip_temp_c").null();
+  }
+  multi_heap_info_t hi = {};
+  heap_caps_get_info(&hi, MALLOC_CAP_DEFAULT);
+  w.key("heap")
+      .beginObject()
+      .kvu("free", hi.total_free_bytes)
+      .kvu("allocated", hi.total_allocated_bytes)
+      .kvu("min_free", hi.minimum_free_bytes)
+      .kvu("largest_block", hi.largest_free_block)
+      .endObject();
+  if (wifi_ != nullptr) {
+    wifi_->writeJson(w);
+  }
+  w.key("udp_log")
+      .beginObject()
+      .kvu("sent", udpLogSent())
+      .kvu("dropped", udpLogDropped())
+      .endObject();
+#if CONFIG_FREERTOS_USE_TRACE_FACILITY
+  static TaskStatus_t tasks[32];
+  const UBaseType_t n = uxTaskGetSystemState(tasks, 32, nullptr);
+  w.key("tasks").beginArray();
+  for (UBaseType_t i = 0; i < n; ++i) {
+    w.beginObject()
+        .kv("name", tasks[i].pcTaskName)
+        .kvu("stack_free", static_cast<uint32_t>(tasks[i].usStackHighWaterMark *
+                                                 sizeof(StackType_t)))
+        .kvu("prio", static_cast<uint32_t>(tasks[i].uxCurrentPriority))
+        .endObject();
+  }
+  w.endArray();
+#endif
+  writeCrash(w);
+}
+
+// Last crash from the core dump partition (like the WIFI_RS crash log):
+// read once per wake, kept until cleared from the portal.
+void EspSystemPort::writeCrash(gm::JsonWriter& w) {
+  static bool s_read = false;
+  static bool s_present = false;
+  static esp_core_dump_summary_t s_sum;
+  static char s_reason[96] = "";
+  if (!s_read) {
+    s_read = true;
+    s_present = esp_core_dump_image_check() == ESP_OK &&
+                esp_core_dump_get_summary(&s_sum) == ESP_OK;
+    if (s_present &&
+        esp_core_dump_get_panic_reason(s_reason, sizeof(s_reason)) != ESP_OK) {
+      s_reason[0] = '\0';
+    }
+  }
+  if (crashCleared_) {
+    s_present = false;
+  }
+  w.key("crash").beginObject().kvb("present", s_present);
+  if (s_present) {
+    char pc[12];
+    char cause[12];
+    char elf[17];
+    snprintf(pc, sizeof(pc), "0x%08lx",
+             static_cast<unsigned long>(s_sum.exc_pc));
+    snprintf(cause, sizeof(cause), "%lu",
+             static_cast<unsigned long>(s_sum.ex_info.mcause));
+    snprintf(elf, sizeof(elf), "%.16s",
+             reinterpret_cast<const char*>(s_sum.app_elf_sha256));
+    w.kv("task", s_sum.exc_task)
+        .kv("pc", pc)
+        .kv("mcause", cause)
+        .kv("reason", s_reason)
+        .kv("elf_sha256", elf);
+  }
+  w.endObject();
+}
+
+void EspSystemPort::applyLogging(const gm::Config& cfg) {
+  udpLogApply(cfg.logUdp != 0, cfg.logLevel, cfg.logHost,
+              static_cast<uint16_t>(cfg.logPort), apSsid);
 }
 
 bool EspSystemPort::platformAction(const char* action, const gm::Form& args,
@@ -146,6 +273,15 @@ bool EspSystemPort::platformAction(const char* action, const gm::Form& args,
     enterService = true;
     snprintf(msg, cap, "entering service mode (SoftAP %s, http://192.168.4.1/)",
              apSsid);
+    return true;
+  }
+  if (std::strcmp(action, "crash_clear") == 0) {
+    if (esp_core_dump_image_erase() != ESP_OK) {
+      snprintf(msg, cap, "crash record could not be erased");
+      return false;
+    }
+    crashCleared_ = true;
+    snprintf(msg, cap, "crash record erased");
     return true;
   }
   if (std::strcmp(action, "sim") == 0) {

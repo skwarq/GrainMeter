@@ -36,6 +36,9 @@ void configDefaults(Config* cfg, const char* defaultReportUrl,
   cfg->battLowMv = 3450;   // Li-ion ~15 %: economy mode
   cfg->battCritMv = 3300;  // ~5 %: measure only, no radio
   cfg->updateCheckH = 24;
+  cfg->logUdp = 0;
+  cfg->logLevel = 3;
+  cfg->logPort = 5514;
   copyStr(cfg->updateUrl, sizeof(cfg->updateUrl),
           defaultUpdateUrl != nullptr ? defaultUpdateUrl : "");
 }
@@ -268,6 +271,10 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
       {"batt_crit_mv", &next.battCritMv, 0, 4500,
        "batt_crit_mv: 0 (off) or 2500..4500"},
       {"update_check_h", &next.updateCheckH, 0, 720, "update_check_h: 0..720"},
+      {"log_udp", &next.logUdp, 0, 1, "log_udp: 0 or 1"},
+      {"log_level", &next.logLevel, 1, 4,
+       "log_level: 1 error, 2 warning, 3 info, 4 debug"},
+      {"log_port", &next.logPort, 1, 65535, "log_port: 1..65535"},
   };
   for (size_t i = 0; i < sizeof(more) / sizeof(more[0]); ++i) {
     if (!form.has(more[i].name)) {
@@ -322,6 +329,14 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
     }
     copyStr(ips[i].dst, 16, v);
   }
+  if (form.has("log_host")) {
+    if (!form.get("log_host", v, sizeof(v)) || strlen(v) > 15 ||
+        !validIpOrEmpty(v)) {
+      setErr(err, errCap, "log_host: empty (broadcast) or a.b.c.d");
+      return false;
+    }
+    copyStr(next.logHost, sizeof(next.logHost), v);
+  }
   if (next.staticIp[0] != '\0' &&
       (next.gateway[0] == '\0' || next.netmask[0] == '\0')) {
     setErr(err, errCap, "static_ip needs gateway and netmask");
@@ -363,6 +378,7 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
       {"gateway", cfg->gateway, sizeof(cfg->gateway), 5},
       {"netmask", cfg->netmask, sizeof(cfg->netmask), 5},
       {"dns", cfg->dns, sizeof(cfg->dns), 5},
+      {"log_host", cfg->logHost, sizeof(cfg->logHost), 5},
   };
   for (size_t i = 0; i < sizeof(texts) / sizeof(texts[0]); ++i) {
     if (!store.get(texts[i].key, v, sizeof(v))) {
@@ -408,6 +424,9 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
       {"batt_low_mv", &cfg->battLowMv, 0, 4500},
       {"batt_crit_mv", &cfg->battCritMv, 0, 4500},
       {"update_check_h", &cfg->updateCheckH, 0, 720},
+      {"log_udp", &cfg->logUdp, 0, 1},
+      {"log_level", &cfg->logLevel, 1, 4},
+      {"log_port", &cfg->logPort, 1, 65535},
   };
   for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); ++i) {
     if (store.get(nums[i].key, v, sizeof(v)) &&
@@ -452,10 +471,11 @@ bool configSave(KeyValueStore& store, const Config& cfg) {
   const struct {
     const char* key;
     uint32_t value;
-  } nums[] = {{"diag_every_h", cfg.diagEveryH},
-              {"batt_low_mv", cfg.battLowMv},
-              {"batt_crit_mv", cfg.battCritMv},
-              {"update_check_h", cfg.updateCheckH}};
+  } nums[] = {
+      {"diag_every_h", cfg.diagEveryH}, {"batt_low_mv", cfg.battLowMv},
+      {"batt_crit_mv", cfg.battCritMv}, {"update_check_h", cfg.updateCheckH},
+      {"log_udp", cfg.logUdp},          {"log_level", cfg.logLevel},
+      {"log_port", cfg.logPort}};
   for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); ++i) {
     snprintf(num, sizeof(num), "%lu",
              static_cast<unsigned long>(nums[i].value));
@@ -466,6 +486,7 @@ bool configSave(KeyValueStore& store, const Config& cfg) {
   ok = store.set("gateway", cfg.gateway) && ok;
   ok = store.set("netmask", cfg.netmask) && ok;
   ok = store.set("dns", cfg.dns) && ok;
+  ok = store.set("log_host", cfg.logHost) && ok;
   return store.commit() && ok;
 }
 
@@ -500,6 +521,10 @@ void configWriteJson(JsonWriter& w, const Config& cfg) {
       .kv("gateway", cfg.gateway)
       .kv("netmask", cfg.netmask)
       .kv("dns", cfg.dns)
+      .kvb("log_udp", cfg.logUdp != 0)
+      .kvu("log_level", cfg.logLevel)
+      .kv("log_host", cfg.logHost)
+      .kvu("log_port", cfg.logPort)
       .endObject();
 }
 

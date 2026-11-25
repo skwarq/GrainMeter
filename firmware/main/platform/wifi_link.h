@@ -19,8 +19,18 @@ class WifiLink : public gm::Network {
   bool syncTime(uint32_t timeoutMs) override;
   int rssi() override;
   const char* stateText() override;
+  const char* ipText() override;
+  int scan(gm::WifiNetwork* out, int max) override;
 
-  // Service mode access point (WPA2-PSK), fixed IP 192.168.4.1.
+  // Service mode on the bench: the station link stays up for the LAN portal,
+  // so disconnect() after an upload keeps it. false drops it again.
+  void setKeepStation(bool keep);
+  bool connected() const { return connected_; }
+  // "station": {ip, channel, bssid, rssi} for /api/diag.
+  void writeJson(gm::JsonWriter& w);
+
+  // Service mode access point (open when password is empty, else WPA2-PSK),
+  // fixed IP 192.168.4.1, DHCP option 114 = portal URL.
   esp_err_t startAp(const char* ssid, const char* password, uint8_t channel);
   void stopAp();
   int apClients();
@@ -29,6 +39,7 @@ class WifiLink : public gm::Network {
  private:
   static void onEvent(void* arg, esp_event_base_t base, int32_t id, void* data);
   esp_err_t applyMode();
+  void dropStation();
 
   esp_netif_t* sta_ = nullptr;
   esp_netif_t* ap_ = nullptr;
@@ -36,6 +47,10 @@ class WifiLink : public gm::Network {
   bool started_ = false;
   bool staWanted_ = false;
   bool apRunning_ = false;
+  bool scanning_ = false;
+  bool keepSta_ = false;
+  char staSsid_[33] = "";  // network of the current station link
+  char ip_[16] = "";
   volatile bool connected_ = false;
   volatile int lastReason_ = 0;
 };

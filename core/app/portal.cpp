@@ -73,6 +73,36 @@ static bool parseRange(const char* p, uint32_t* from, uint32_t* to) {
   return true;
 }
 
+int wifiScanNormalize(WifiNetwork* list, int n) {
+  int out = 0;
+  for (int i = 0; i < n; ++i) {
+    if (list[i].ssid[0] == '\0') continue;  // hidden network
+    int same = -1;
+    for (int j = 0; j < out; ++j) {
+      if (strcmp(list[j].ssid, list[i].ssid) == 0) {
+        same = j;
+        break;
+      }
+    }
+    if (same < 0) {
+      list[out++] = list[i];
+    } else if (list[i].rssi > list[same].rssi) {
+      list[same] = list[i];
+    }
+  }
+  // Insertion sort: at most a few dozen entries.
+  for (int i = 1; i < out; ++i) {
+    const WifiNetwork x = list[i];
+    int j = i - 1;
+    while (j >= 0 && list[j].rssi < x.rssi) {
+      list[j + 1] = list[j];
+      --j;
+    }
+    list[j + 1] = x;
+  }
+  return out;
+}
+
 bool Portal::handle(const PortalRequest& req, PortalReply* r) {
   r->restartAfter = false;
   if (strncmp(req.path, "/api/", 5) != 0) {
@@ -144,6 +174,12 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
     r->len = len;
     return true;
   }
+  if (is(req, "GET", "/api/wifi/join")) {
+    JsonWriter w(out_, sizeof(out_));
+    app_.writeWifiJoin(w);
+    reply(r, 200);
+    return true;
+  }
   if (is(req, "GET", "/api/ota")) {
     JsonWriter w(out_, sizeof(out_));
     app_.ota().writeJson(w);
@@ -177,6 +213,40 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
       replyError(r, 409, "update in progress");
     } else if (app_.applyConfig(form, err, sizeof(err))) {
       replyOk(r, "configuration saved");
+    } else {
+      replyError(r, 400, err);
+    }
+  } else if (is(req, "POST", "/api/wifi/scan")) {
+    // Static: too large for the stack of the ESP32 HTTP task, and the portal
+    // is only used under the device lock.
+    static WifiNetwork nets[kWifiScanMax];
+    int n = app_.ports().net->scan(nets, kWifiScanMax);
+    if (n < 0) {
+      replyError(r, 501, "Wi-Fi scan not supported on this platform");
+      return true;
+    }
+    n = wifiScanNormalize(nets, n);
+    JsonWriter w(out_, sizeof(out_));
+    w.beginObject().kvb("ok", true).key("networks").beginArray();
+    for (int i = 0; i < n; ++i) {
+      w.beginObject()
+          .kv("ssid", nets[i].ssid)
+          .kv("rssi", static_cast<int64_t>(nets[i].rssi))
+          .kvu("channel", nets[i].channel)
+          .kvb("secure", nets[i].secure)
+          .endObject();
+    }
+    w.endArray().endObject();
+    if (!w.ok()) {
+      replyError(r, 500, "scan result too large");
+    } else {
+      reply(r, 200);
+    }
+  } else if (is(req, "POST", "/api/wifi/join")) {
+    if (app_.ota().busy()) {
+      replyError(r, 409, "update in progress");
+    } else if (app_.wifiJoinRequest(form, err, sizeof(err))) {
+      replyOk(r, "connecting; poll GET /api/wifi/join");
     } else {
       replyError(r, 400, err);
     }
@@ -256,6 +326,14 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
       replyError(r, 409, "update in progress");
     } else if (app_.ports().sys->platformAction("exit_service", form, msg,
                                                 sizeof(msg))) {
+      replyOk(r, msg);
+    } else {
+      replyError(r, 400, msg[0] ? msg : "not supported");
+    }
+  } else if (is(req, "POST", "/api/crash/clear")) {
+    char msg[96] = "";
+    if (app_.ports().sys->platformAction("crash_clear", form, msg,
+                                         sizeof(msg))) {
       replyOk(r, msg);
     } else {
       replyError(r, 400, msg[0] ? msg : "not supported");

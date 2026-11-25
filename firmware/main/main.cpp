@@ -4,8 +4,10 @@
 // Normal cycle (battery): wake -> measure (every 15 min) -> upload when due
 // (4 samples, hourly) -> deep sleep. Samples wait in RTC memory between
 // wakes. Service mode (BOOT pressed within the window after reset, first
-// boot without configuration, or `service` on the USB console): WPA2 SoftAP
-// "GrainMeter-XXXX", captive DNS, portal at http://192.168.4.1/, OTA upload.
+// boot without configuration, `service` on the USB console or a computer on
+// USB): open SoftAP "GrainMeter-XXXX" (WPA2 with GM_SERVICE_AP_OPEN=n),
+// captive DNS, portal at http://192.168.4.1/ (and on the local network while
+// the station link is up), OTA upload.
 #include <cstdio>
 #include <cstring>
 
@@ -124,32 +126,96 @@ static void ensureServicePassword() {
   }
 }
 
-static void runServiceMode() {
+// SoftAP + captive DNS. Returns false while no service password is set
+// (checked again every second: `set svc_pass` starts it without a restart).
+static bool startServiceAp() {
   Device& d = device();
-  d.sys.serviceMode = true;
-  d.sys.exitService = false;
-  d.sys.enterService = false;
   char pass[65];
   {
     DeviceLock lock;
     snprintf(pass, sizeof(pass), "%s", d.app->config().servicePassword);
   }
+#if CONFIG_GM_SERVICE_AP_OPEN
+  pass[0] = '\0';  // open AP like WIFI_RS; portal writes still need it
+#else
   if (pass[0] == '\0') {
+    return false;
+  }
+#endif
+  const bool ok =
+      d.wifi.startAp(d.sys.apSsid, pass, CONFIG_GM_AP_CHANNEL) == ESP_OK;
+  std::memset(pass, 0, sizeof(pass));
+  if (!ok) {
+    ESP_LOGE(kTag, "SoftAP start failed");
+    return false;
+  }
+  const uint8_t ipBytes[4] = {192, 168, 4, 1};
+  uint32_t ip;
+  std::memcpy(&ip, ipBytes, 4);
+  dnsRedirectStart(ip);
+  ESP_LOGI(kTag, "service mode: SSID %s, http://192.168.4.1/", d.sys.apSsid);
+  return true;
+}
+
+// Station link for the portal on the local network (bench with a computer
+// on USB, or after a join from the portal). Blocks up to 15 s.
+static void connectLan() {
+  Device& d = device();
+  gm::Config cfg;
+  {
+    DeviceLock lock;
+    cfg = d.app->config();
+  }
+  if (cfg.wifiSsid[0] != '\0') {
+    d.wifi.setKeepStation(true);
+    char err[96] = "";
+    if (d.wifi.connect(cfg, 15000, err, sizeof(err))) {
+      ESP_LOGI(kTag, "portal on the local network: http://%s/",
+               d.wifi.ipText());
+    } else {
+      ESP_LOGW(kTag, "local network: %s", err);
+    }
+  }
+  std::memset(&cfg, 0, sizeof(cfg));
+}
+
+// Wi-Fi join requested in the portal: connect outside the device lock (the
+// portal keeps polling the result meanwhile).
+static void runWifiJoin() {
+  Device& d = device();
+  gm::Config cand;
+  {
+    DeviceLock lock;
+    if (!d.app->wifiJoinTake(&cand)) {
+      return;
+    }
+  }
+  d.wifi.setKeepStation(true);
+  char err[96] = "";
+  const bool ok =
+      d.wifi.connect(cand, gm::kWifiConnectTimeoutMs, err, sizeof(err));
+  {
+    DeviceLock lock;
+    d.app->wifiJoinFinish(cand, ok, err);
+  }
+  std::memset(&cand, 0, sizeof(cand));
+  if (ok) {
+    ESP_LOGI(kTag, "portal on the local network: http://%s/", d.wifi.ipText());
+  }
+}
+
+static void runServiceMode() {
+  Device& d = device();
+  d.sys.serviceMode = true;
+  d.sys.exitService = false;
+  d.sys.enterService = false;
+  bool apUp = startServiceAp();
+  if (!apUp) {
     ESP_LOGW(kTag,
              "service password not set: SoftAP disabled. Use the USB console: "
              "set svc_pass <8+ chars>");
-  } else if (d.wifi.startAp(d.sys.apSsid, pass, CONFIG_GM_AP_CHANNEL) ==
-             ESP_OK) {
-    const uint8_t ipBytes[4] = {192, 168, 4, 1};
-    uint32_t ip;
-    std::memcpy(&ip, ipBytes, 4);
-    dnsRedirectStart(ip);
-    webPortalStart();
-    ESP_LOGI(kTag, "service mode: SSID %s, http://192.168.4.1/", d.sys.apSsid);
-  } else {
-    ESP_LOGE(kTag, "SoftAP start failed");
   }
-  std::memset(pass, 0, sizeof(pass));
+  webPortalStart();  // also reachable over the station link
   ledBlink(1000);
 
   // A remotely requested window stays open at least that long, even before
@@ -157,11 +223,25 @@ static void runServiceMode() {
   const int64_t minOpenUs =
       static_cast<int64_t>(d.sys.serviceMinutes.exchange(0)) * 60 * 1000000;
   const int64_t startUs = esp_timer_get_time();
+  int64_t lastLanTryUs = -60 * 1000000LL;
   int64_t noClientS = 0;
   while (!d.sys.exitService) {
+    if (!apUp) {
+      apUp = startServiceAp();
+    }
+    // Computer on USB (bench): portal also on the local network, no timeout.
+    const bool bench = usbConnected();
+    if (bench && !d.wifi.connected() &&
+        esp_timer_get_time() - lastLanTryUs >= 60 * 1000000LL) {
+      lastLanTryUs = esp_timer_get_time();
+      connectLan();
+    }
+    runWifiJoin();
     {
       DeviceLock lock;
-      d.app->runDue(false);  // keep measuring; radio stays on the AP
+      // Uploads only over a kept station link; otherwise the radio stays
+      // on the AP.
+      d.app->runDue(d.wifi.connected());
     }
     if (d.sys.restart) {
       restartNow();
@@ -174,16 +254,14 @@ static void runServiceMode() {
     const int clients = d.wifi.apClients();
     noClientS = clients > 0 ? 0 : noClientS + 1;
     const uint32_t httpIdle = webPortalIdleSeconds();
-    const uint32_t usbIdle =
-        usbConnected() ? usbConsoleIdleSeconds() : UINT32_MAX;
     const uint32_t idle = static_cast<uint32_t>(noClientS) < httpIdle
                               ? static_cast<uint32_t>(noClientS)
                               : httpIdle;
     d.sys.serviceIdleS = idle;
     // Never leave (and never sleep) while an update is being written.
     const bool windowOver = esp_timer_get_time() - startUs >= minOpenUs;
-    if (!otaBusy && windowOver && idle >= CONFIG_GM_SERVICE_TIMEOUT_S &&
-        usbIdle >= CONFIG_GM_SERVICE_TIMEOUT_S) {
+    if (!otaBusy && !bench && windowOver &&
+        idle >= CONFIG_GM_SERVICE_TIMEOUT_S) {
       ESP_LOGI(kTag, "service mode idle for %lu s",
                static_cast<unsigned long>(idle));
       break;
@@ -193,6 +271,7 @@ static void runServiceMode() {
   webPortalStop();
   dnsRedirectStop();
   d.wifi.stopAp();
+  d.wifi.setKeepStation(false);
   ledBlink(0);
   d.sys.serviceMode = false;
   d.sys.exitService = false;
@@ -260,10 +339,22 @@ extern "C" void app_main(void) {
   }
 
   const int64_t bootUs = esp_timer_get_time();
+  // Bench: a computer on USB starts service mode (portal also on the local
+  // network). Leaving it with exit-service holds until the cable is removed.
+  bool benchDismissed = false;
   while (true) {
-    if (service || d.sys.enterService || serviceWakeButtonPressed()) {
+    const bool usbHost = usbConnected();
+    if (!usbHost) {
+      benchDismissed = false;
+    }
+    if (service || d.sys.enterService || serviceWakeButtonPressed() ||
+        (usbHost && !benchDismissed)) {
+      if (usbHost && !service && !d.sys.enterService) {
+        ESP_LOGI(kTag, "computer on USB: service mode (bench)");
+      }
       runServiceMode();
       service = false;
+      benchDismissed = usbConnected();
     }
     uint32_t sleepS;
     {

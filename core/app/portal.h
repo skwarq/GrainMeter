@@ -37,6 +37,8 @@ struct PortalReply {
 enum { kPortalMaxBody = 2048 };
 // One history page: 256 rows x 24 B + header = 6.2 KiB.
 enum { kHistoryPageRows = 256 };
+// Access points listed by POST /api/wifi/scan (before de-duplication).
+enum { kWifiScanMax = 40 };
 
 // How the OTA request body reaches Portal::otaFeed():
 //  Raw         - the image itself (application/octet-stream), exact length

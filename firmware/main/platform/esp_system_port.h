@@ -20,6 +20,7 @@ class EspSystemPort : public gm::SystemPort {
   bool platformAction(const char* action, const gm::Form& args, char* msg,
                       size_t cap) override;
   const char* rejectedFirmware() override { return rejected_; }
+  void applyLogging(const gm::Config& cfg) override;
 
   // Shared with the main loop.
   std::atomic<bool> restart{false};
@@ -40,4 +41,8 @@ class EspSystemPort : public gm::SystemPort {
   int batteryMv_ = -1;
   bool batteryRead_ = false;
   char rejected_[33] = "";
+  uint32_t bootCount_ = 0;
+  bool crashCleared_ = false;
+  void writeDetails(gm::JsonWriter& w);
+  void writeCrash(gm::JsonWriter& w);
 };

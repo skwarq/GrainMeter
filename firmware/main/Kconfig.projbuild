@@ -71,6 +71,15 @@ menu "GrainMeter"
         range 1 13
         default 1
 
+    config GM_SERVICE_AP_OPEN
+        bool "Open service access point (no Wi-Fi password)"
+        default y
+        help
+            Like WIFI_RS: the SoftAP has no password, so phones join it
+            directly and show the captive portal. Changes, OTA and actions
+            in the portal still need the service password. Disable for a
+            WPA2 SoftAP protected by the service password.
+
     config GM_DEFAULT_UPDATE_URL
         string "Default remote update manifest URL (empty = off)"
         default ""

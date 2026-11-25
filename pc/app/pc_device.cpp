@@ -108,6 +108,7 @@ uint32_t PcDevice::tick() {
   if (app_->ota().busy()) {
     return 1;  // never "sleep" while an update is being written
   }
+  app_->runWifiJoin();
   return app_->runDue(true);
 }
 

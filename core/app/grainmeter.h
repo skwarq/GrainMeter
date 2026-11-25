@@ -91,6 +91,20 @@ class GrainMeter {
 
   bool checkServicePassword(const char* pass) const;
 
+  // Wi-Fi join from the portal (network picked from a scan): the request
+  // only validates and queues; the platform loop runs it with
+  // wifiJoinTake() -> Network::connect() -> wifiJoinFinish(), outside the
+  // device lock on ESP32 (connecting takes up to 20 s while the portal
+  // polls GET /api/wifi/join). On success the Wi-Fi and IP fields are saved.
+  // Form keys: wifi_ssid, wifi_pass, wifi_pass_clear, static_ip, gateway,
+  // netmask, dns (empty password = keep the stored one).
+  bool wifiJoinRequest(const Form& form, char* err, size_t cap);
+  bool wifiJoinTake(Config* candidate);  // pending -> running
+  void wifiJoinFinish(const Config& candidate, bool ok, const char* msg);
+  // Convenience for platforms that may block under their lock (PC).
+  void runWifiJoin();
+  void writeWifiJoin(JsonWriter& w);
+
   void writeStatus(JsonWriter& w);  // compact (portal refresh)
   void writeDiag(JsonWriter& w);    // full diagnostics
 
@@ -169,6 +183,13 @@ class GrainMeter {
   bool manualRun_ = false;  // failures of a button press are not device errors
   char manualMsg_[96] = "";
   RemoteUpdateResult refuseManual(RemoteUpdateResult r, const char* msg);
+  enum class JoinState : uint8_t { Idle, Pending, Running, Ok, Failed };
+  JoinState joinState_ = JoinState::Idle;
+  Config joinCfg_;  // candidate (holds a password: never serialised)
+  char joinSsid_[33] = "";
+  char joinMsg_[96] = "";
+  char joinIp_[16] = "";
+  int joinRssi_ = 0;
   PowerMode powerMode_;
   OtaSession ota_;
   HistoryLog history_;

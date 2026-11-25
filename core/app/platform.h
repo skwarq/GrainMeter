@@ -26,9 +26,28 @@ class Clock {
   virtual uint32_t epoch() = 0;
 };
 
+// One access point found by a Wi-Fi scan.
+struct WifiNetwork {
+  char ssid[33];
+  int rssi;  // dBm
+  uint8_t channel;
+  bool secure;  // false = open network
+};
+
+// Drops hidden networks (empty SSID), keeps the strongest entry per SSID
+// and sorts by signal, strongest first. Returns the new count.
+int wifiScanNormalize(WifiNetwork* list, int n);
+
 class Network {
  public:
   virtual ~Network() {}
+  // Lists nearby access points (blocking, a few seconds). Returns the count
+  // written to out, or -1 when the platform cannot scan.
+  virtual int scan(WifiNetwork* out, int max) {
+    (void)out;
+    (void)max;
+    return -1;
+  }
   // Brings up the station link. Must give up after timeoutMs.
   virtual bool connect(const Config& cfg, uint32_t timeoutMs, char* err,
                        size_t errCap) = 0;
@@ -37,6 +56,8 @@ class Network {
   virtual bool syncTime(uint32_t timeoutMs) = 0;
   virtual int rssi() = 0;               // dBm, 0 = unknown
   virtual const char* stateText() = 0;  // "off", "connecting", "connected", ...
+  // Station IPv4 address while connected, "" otherwise.
+  virtual const char* ipText() { return ""; }
 };
 
 struct HttpResult {
@@ -93,6 +114,9 @@ class SystemPort {
   // Version of a firmware that failed its first boot and was rolled back
   // ("" if none). Remote updates never retry that version.
   virtual const char* rejectedFirmware() { return ""; }
+  // Called after the configuration was loaded or changed: platforms that
+  // forward logs (ESP32: UDP, like WIFI_RS) apply log_udp/level/host/port.
+  virtual void applyLogging(const Config& cfg) { (void)cfg; }
 };
 
 }  // namespace gm

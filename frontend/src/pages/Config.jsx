@@ -6,6 +6,7 @@ import { Card, Button, Result, Loading, PageHead, Badge } from '../components/ui
 import { describeError } from '../lib/errors.js';
 import { formatDuration, samplesPerUpload } from '../lib/format.js';
 import { validateNetworkAndPower } from '../lib/power.js';
+import { WifiPicker } from '../components/WifiPicker.jsx';
 
 const TEXT_FIELDS = [
   'name',
@@ -24,6 +25,9 @@ const TEXT_FIELDS = [
   'gateway',
   'netmask',
   'dns',
+  'log_level',
+  'log_host',
+  'log_port',
 ];
 const SECRET_FIELDS = ['wifi_pass', 'ts_key', 'diag_key'];
 
@@ -32,6 +36,7 @@ function fromConfig(c) {
   for (const k of TEXT_FIELDS) f[k] = c[k] === undefined || c[k] === null ? '' : String(c[k]);
   for (const k of SECRET_FIELDS) f[k] = '';
   f.wifi_pass_clear = false;
+  f.log_udp = !!c.log_udp;
   f.svc_pass = '';
   f.svc_pass2 = '';
   return f;
@@ -77,6 +82,26 @@ export function Config() {
 
   const spu = samplesPerUpload(f.measure_s, f.upload_s);
 
+  const pickNetwork = (ssid, secure) => {
+    setF({ ...f, wifi_ssid: ssid, wifi_pass: '', wifi_pass_clear: !secure });
+    setLocalErr('');
+    if (secure) setTimeout(() => document.getElementById('wifi-pass')?.focus(), 0);
+  };
+
+  // Body for "Connect and save" (Wi-Fi + IP fields only), or an error text
+  // shown next to the picker.
+  const joinForm = () => {
+    const ssid = f.wifi_ssid.trim();
+    if (ssid !== c.wifi_ssid && !f.wifi_pass && !f.wifi_pass_clear) return t('wifi.needPass');
+    const netErr = validateNetworkAndPower(f);
+    if (netErr) return t(netErr);
+    const form = { wifi_ssid: ssid };
+    for (const k of ['static_ip', 'gateway', 'netmask', 'dns']) form[k] = f[k].trim();
+    if (f.wifi_pass_clear) form.wifi_pass_clear = 1;
+    else if (f.wifi_pass) form.wifi_pass = f.wifi_pass;
+    return form;
+  };
+
   const submit = (e) => {
     e.preventDefault();
     setLocalErr('');
@@ -99,6 +124,7 @@ export function Config() {
       delete form.wifi_pass;
     }
     if (f.svc_pass) form.svc_pass = f.svc_pass;
+    form.log_udp = f.log_udp ? 1 : 0;
     act
       .run(() => api.saveConfig(form), { ok: (r) => r.message || t('config.saved') })
       .then((r) => {
@@ -134,7 +160,7 @@ export function Config() {
             />
           </Field>
           <Field label={t('config.wifiPass')} hint={t('config.secretHint')}>
-            <input {...secret('wifi_pass', c.wifi_pass_set)} disabled={f.wifi_pass_clear} />
+            <input id="wifi-pass" {...secret('wifi_pass', c.wifi_pass_set)} disabled={f.wifi_pass_clear} />
           </Field>
           <label class="check field-wide">
             <input type="checkbox" checked={f.wifi_pass_clear} onChange={set('wifi_pass_clear')} />
@@ -189,6 +215,15 @@ export function Config() {
               spellcheck={false}
             />
           </Field>
+          <WifiPicker
+            form={f}
+            onPick={pickNetwork}
+            joinForm={joinForm}
+            onJoined={() => {
+              cfg.reload();
+              refresh();
+            }}
+          />
         </div>
       </Card>
 
@@ -302,6 +337,50 @@ export function Config() {
             </>
           )}
         </p>
+      </Card>
+
+      <Card title={t('config.logs')} icon="diag">
+        <div class="form-grid">
+          <label class="check field-wide">
+            <input type="checkbox" checked={f.log_udp} onChange={set('log_udp')} />
+            <span>{t('config.logUdp')}</span>
+          </label>
+          <Field label={t('config.logLevel')}>
+            <select value={f.log_level} onChange={set('log_level')} disabled={!f.log_udp}>
+              <option value="1">{t('config.logLevel1')}</option>
+              <option value="2">{t('config.logLevel2')}</option>
+              <option value="3">{t('config.logLevel3')}</option>
+              <option value="4">{t('config.logLevel4')}</option>
+            </select>
+          </Field>
+          <Field label={t('config.logHost')} hint={t('config.logHostHint')}>
+            <input
+              type="text"
+              inputMode="decimal"
+              maxLength={15}
+              placeholder="255.255.255.255"
+              value={f.log_host}
+              onInput={set('log_host')}
+              disabled={!f.log_udp}
+              autocapitalize="off"
+              spellcheck={false}
+            />
+          </Field>
+          <Field label={t('config.logPort')}>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="1"
+              max="65535"
+              value={f.log_port}
+              onInput={set('log_port')}
+              disabled={!f.log_udp}
+            />
+          </Field>
+          <p class="muted small field-wide">
+            {t('config.logHint')} <code>nc -ulk {f.log_port || 5514}</code>
+          </p>
+        </div>
       </Card>
 
       <Card title={t('config.service')} icon="lock">

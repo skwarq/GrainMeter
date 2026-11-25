@@ -1,8 +1,8 @@
 import { useRef, useState } from 'preact/hooks';
 import * as api from '../api.js';
 import { useI18n, tOr, errorText } from '../components/i18n.js';
-import { useLoad } from '../components/hooks.js';
-import { Card, Button, Badge, KV, Loading, PageHead, Empty, Icon } from '../components/ui.jsx';
+import { useAction, useLoad } from '../components/hooks.js';
+import { Card, Button, Badge, KV, Loading, PageHead, Empty, Icon, Result } from '../components/ui.jsx';
 import { describeError } from '../lib/errors.js';
 import { formatDuration, formatRom, formatBytes, formatEpoch } from '../lib/format.js';
 import { formatTemp, pointState, tempColor, isTemp } from '../lib/temp.js';
@@ -308,6 +308,8 @@ export function Diagnostics() {
         </Card>
       )}
 
+      {d.esp && d.esp.uptime_s !== undefined && <EspDetails esp={d.esp} onCleared={() => diag.reload()} />}
+
       {d.sim && (
         <Card title={t('diag.sim')} icon="sim">
           <KV
@@ -363,5 +365,97 @@ export function Diagnostics() {
 
       <RawJson data={d} />
     </div>
+  );
+}
+
+/** WIFI_RS style device diagnostics (ESP32 only): system, memory, station
+ *  link, UDP log counters, FreeRTOS tasks and the last crash (core dump). */
+function EspDetails({ esp, onCleared }) {
+  const { t } = useI18n();
+  const act = useAction();
+  const st = esp.station || {};
+  const crash = esp.crash || { present: false };
+  const clear = () =>
+    act.run(() => api.clearCrash(), { ok: (r) => r.message || t('diag.crashCleared') }).then((r) => r && onCleared());
+  const tasks = (esp.tasks || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <>
+      <Card title={t('diag.espSystem')} icon="chip">
+        <KV
+          items={[
+            [t('diag.sinceBoot'), formatDuration(esp.uptime_s)],
+            [t('diag.bootCount'), esp.boot_count],
+            [t('diag.build'), esp.build],
+            ['ESP-IDF', esp.idf],
+            [
+              t('diag.chipTemp'),
+              esp.chip_temp_c === null || esp.chip_temp_c === undefined ? '—' : esp.chip_temp_c.toFixed(1) + ' °C',
+            ],
+            esp.heap && [t('diag.freeHeap'), formatBytes(esp.heap.free)],
+            esp.heap && [t('diag.minFreeHeap'), formatBytes(esp.heap.min_free)],
+            esp.heap && [t('diag.largestBlock'), formatBytes(esp.heap.largest_block)],
+            [
+              t('diag.station'),
+              st.connected ? `${st.ssid} · ${st.ip} · ${t('wifi.channel', { ch: st.channel })} · ${st.rssi} dBm` : '—',
+            ],
+            st.connected && ['BSSID', st.bssid],
+            esp.udp_log && [
+              t('diag.udpLog'),
+              t('diag.udpLogCounts', { sent: esp.udp_log.sent, dropped: esp.udp_log.dropped }),
+            ],
+          ]}
+        />
+        <p class="muted small">{t('diag.chipTempHint')}</p>
+      </Card>
+
+      <Card title={t('diag.crash')} icon="warn" tone={crash.present ? 'danger' : undefined}>
+        {crash.present ? (
+          <>
+            <KV
+              items={[
+                [t('diag.crashTask'), crash.task],
+                ['PC', crash.pc],
+                ['mcause', crash.mcause],
+                crash.reason && [t('diag.crashReason'), crash.reason],
+                ['ELF SHA-256', crash.elf_sha256],
+              ]}
+            />
+            <Result result={act.result} />
+            <div class="row-actions">
+              <Button small busy={act.busy} onClick={clear}>
+                {t('diag.crashClear')}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <p class="muted">{t('diag.noCrash')}</p>
+        )}
+      </Card>
+
+      {tasks.length > 0 && (
+        <Card title={t('diag.tasks')} icon="db">
+          <div class="table-wrap">
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>{t('diag.taskName')}</th>
+                  <th class="num">{t('diag.stackFree')}</th>
+                  <th class="num">{t('diag.prio')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tasks.map((k) => (
+                  <tr key={k.name}>
+                    <td>{k.name}</td>
+                    <td class={'num' + (k.stack_free < 512 ? ' text-danger' : '')}>{k.stack_free} B</td>
+                    <td class="num">{k.prio}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+    </>
   );
 }

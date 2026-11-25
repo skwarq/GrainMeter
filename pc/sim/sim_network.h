@@ -25,6 +25,11 @@ class SimNetwork : public gm::Network {
   bool syncTime(uint32_t timeoutMs) override;
   int rssi() override { return connected_ ? -58 : 0; }
   const char* stateText() override;
+  const char* ipText() override { return connected_ ? "192.168.0.50" : ""; }
+  // Fixed list of simulated access points (with a duplicate and a hidden
+  // one). Joining "Neighbour" fails like a wrong password; every other SSID
+  // connects.
+  int scan(gm::WifiNetwork* out, int max) override;
 
   void setUp(bool up) { up_ = up; }
   bool up() const { return up_; }

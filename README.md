@@ -4,8 +4,10 @@ Monitor temperatury ziarna w silosie. Zastępuje ręczny czytnik BIN STW-100,
 czyta jego oryginalną sondę wielopunktową (1-Wire, 8 punktów), pracuje z
 akumulatora i panelu słonecznego, co 15 min mierzy, raz na godzinę wysyła
 cztery próbki do ThingSpeak przez HTTPS i zasypia (deep sleep). Lokalnie:
-diagnostyka przez USB, portal serwisowy na SoftAP z captive portalem i
-aktualizacja firmware z przeglądarki (OTA z rollbackiem).
+diagnostyka przez USB, portal serwisowy na SoftAP z captive portalem (także
+w sieci lokalnej, gdy płytka jest podłączona do komputera), wybór sieci Wi-Fi
+z listy, logi przez UDP i aktualizacja firmware z przeglądarki (OTA z
+rollbackiem).
 
 Ta sama logika aplikacji (C++11, bez wyjątków) działa na PC (symulator z
 wirtualną sondą) i na **DFRobot FireBeetle 2 ESP32-C6 (DFR1075)**.
@@ -305,7 +307,7 @@ działa bez sieci; urządzenie nie zasypia, dopóki jest używana (60 s od
 ostatniej komendy).
 
 ```text
-set svc_pass <min. 8 znaków>        # hasło SoftAP (WPA2) i zmian w portalu
+set svc_pass <min. 8 znaków>        # hasło zmian w portalu (i SoftAP przy WPA2)
 set wifi_ssid <sieć>
 set wifi_pass <hasło>
 set ts_channel <id kanału>
@@ -316,13 +318,17 @@ scan
 automap                             # albo: map <ROM> <punkt 1..8> [wysokość cm]
 measure
 upload                              # test wysyłki od razu
+set log_udp 1                       # opcjonalnie: logi przez UDP (patrz niżej)
+status                              # stan (JSON), diag = pełna diagnostyka
 ```
 
 Ustawienia są w NVS (przestrzeń `grainmeter`), mapowanie ROM → punkt i wysokość
 przetrwa restart i utratę zasilania. Sekrety nie są logowane ani zwracane
-przez API (tylko `*_set: true`). Bez `svc_pass` SoftAP się nie uruchomi
-(nie ma domyślnego hasła w repozytorium; opcjonalnie lokalnie
-`CONFIG_GM_DEFAULT_SERVICE_PASSWORD`).
+przez API (tylko `*_set: true`). Bez `svc_pass` portal działa tylko do
+odczytu, a przy SoftAP z WPA2 (`GM_SERVICE_AP_OPEN=n`) AP się nie uruchomi.
+Hasło ustawione w trakcie trybu serwisowego działa od razu, bez restartu.
+W repozytorium nie ma domyślnego hasła; opcjonalnie lokalnie
+`CONFIG_GM_DEFAULT_SERVICE_PASSWORD`.
 
 Wszystko to samo da się zrobić w portalu (tryb serwisowy).
 
@@ -391,17 +397,104 @@ Wejście:
    pinem RST może skasować pamięć RTC (bufor) – do potwierdzenia na płytce.
 3. Pierwsze uruchomienie bez konfiguracji Wi-Fi, komenda `service` w konsoli
    USB albo zdalne żądanie z manifestu (`service_id`, patrz niżej).
+4. **Komputer podłączony przez USB** (tryb „na biurku”, patrz niżej).
 
-Wtedy: SoftAP **`GrainMeter-XXXX`** (WPA2, hasło = `svc_pass`, kanał 1,
-maks. 2 klientów), captive DNS (każde zapytanie A → 192.168.4.1), telefon
-sam otwiera portal; ręcznie: **<http://192.168.4.1/>**. Pomiary trwają dalej,
-wysyłka jest wstrzymana (radio pracuje jako AP). Uśpienie jest zablokowane.
-Koniec: przycisk „Zakończ tryb serwisowy” w portalu lub 10 min bez klientów
-i żądań (nigdy w trakcie OTA) → powrót do cyklu pomiar/deep sleep.
+Wtedy: SoftAP **`GrainMeter-XXXX`**, domyślnie **otwarty, bez hasła** (jak w
+WIFI_RS; telefon łączy się od razu i pokazuje okno logowania). Kanał 1,
+maks. 4 klientów. Captive portal:
 
-„Wyślij teraz” w trybie serwisowym łączy się dodatkowo jako stacja (APSTA).
-Jeśli sieć Wi-Fi pracuje na innym kanale niż AP (kanał 1), radio przełączy
-kanał i telefon może się na chwilę rozłączyć – to normalne zachowanie ESP32.
+- DNS odpowiada adresem 192.168.4.1 na każde zapytanie A (TTL 0, telefon nie
+  zapamiętuje adresu po zakończeniu trybu),
+- każdy nieznany adres HTTP (sprawdzanie łączności Androida, iOS, Windows)
+  dostaje przekierowanie 302 na `http://192.168.4.1/`,
+- DHCP podaje adres portalu w opcji 114 (RFC 8910), z której korzystają
+  Android 11+ i iOS 14+.
+
+Ręcznie: **<http://192.168.4.1/>** (z `http://`). Podgląd stanu jest dostępny
+bez hasła, a każda zmiana, akcja i aktualizacja firmware wymaga hasła
+serwisowego (`svc_pass`). SoftAP z WPA2 i hasłem `svc_pass`: Kconfig
+`GM_SERVICE_AP_OPEN=n`.
+
+Pomiary trwają dalej. Wysyłka działa tylko wtedy, gdy płytka ma równolegle
+połączenie z siecią Wi-Fi (tryb na biurku albo po „Połącz i zapisz”);
+w przeciwnym razie radio pracuje tylko jako AP. Uśpienie jest zablokowane,
+LED miga co 1 s. Koniec: przycisk „Zakończ tryb serwisowy” w portalu lub
+10 min bez klientów i żądań (nigdy w trakcie OTA i nigdy przy podłączonym
+komputerze) → powrót do cyklu pomiar/deep sleep, LED gaśnie.
+
+Gdy płytka łączy się z siecią Wi-Fi w trybie serwisowym (AP + stacja), AP
+przechodzi na kanał tej sieci. Telefon podłączony do AP może się na chwilę
+rozłączyć – to normalne zachowanie ESP32.
+
+### Tryb „na biurku” (komputer na USB)
+
+Płytka wykrywa komputer na USB (host USB, nie zwykła ładowarka ani panel)
+i sama wchodzi w tryb serwisowy:
+
+- nie zasypia i nie kończy trybu serwisowego, dopóki kabel jest w komputerze,
+- łączy się dodatkowo z siecią Wi-Fi z konfiguracji (ponawia co 60 s), więc
+  portal jest dostępny także w sieci lokalnej, np. `http://192.168.0.193/`;
+  adres jest w logu (`portal on the local network: http://…/`), w `status`
+  (`wifi.ip`) i w Diagnostyce,
+- wysyłka do ThingSpeak działa normalnie przez to połączenie.
+
+`exit-service` w konsoli wyłącza tryb do czasu odłączenia kabla. Po
+odłączeniu od komputera urządzenie pracuje jak zwykle. Uwaga: po wybudzeniu
+z deep sleep USB potrzebuje ok. 1 s na ponowne zgłoszenie się w komputerze;
+jeśli płytka zaśnie wcześniej, naciśnij RST albo przycisk serwisowy.
+
+### Wybór sieci Wi-Fi w portalu
+
+Jak w WIFI_RS: Konfiguracja → Wi-Fi → **Szukaj sieci** pokazuje sieci 2,4 GHz
+w zasięgu (siła sygnału, kanał, kłódka = sieć z hasłem; jedna pozycja na SSID,
+najsilniejsze na górze). Kliknięcie wpisuje SSID; potem hasło i ewentualnie
+stały IP (puste pola = DHCP) i **Połącz i zapisz**. Urządzenie łączy się w
+tle, a portal odpytuje o wynik:
+
+- udane połączenie → ustawienia sieci i IP zapisane, widać adres IP i sygnał;
+  portal jest od razu dostępny także pod tym adresem,
+- złe hasło / brak sieci / brak połączenia → komunikat, nic nie zapisano.
+
+API: `POST /api/wifi/scan`, `POST /api/wifi/join` (pola `wifi_ssid`,
+`wifi_pass`, `wifi_pass_clear`, `static_ip`, `gateway`, `netmask`, `dns`;
+puste hasło = zapisane), wynik `GET /api/wifi/join`
+(`idle|pending|running|ok|failed`). ESP32-C6 obsługuje tylko 2,4 GHz.
+
+### Logi przez UDP
+
+Jak w WIFI_RS: Konfiguracja → **Logi przez UDP** (albo w konsoli
+`set log_udp 1`, `set log_level 1..4`, `set log_host`, `set log_port`).
+Każda linia logu trafia dalej na konsolę USB, a dodatkowo jako datagram UDP
+na `log_host:log_port` (domyślnie port 5514; puste `log_host` = rozgłoszenie
+255.255.255.255 w sieci lokalnej). Linie mają prefiks z nazwą SoftAP, np.
+`GrainMeter-0079 I (24880) app: …`, więc da się rozróżnić kilka urządzeń.
+Poziom: 1 błędy, 2 ostrzeżenia, 3 informacje, 4 debug (dotyczy też konsoli
+USB, gdy logi UDP są włączone). Odbiór:
+
+```bash
+nc -ulk 5514
+```
+
+Logi idą tylko wtedy, gdy płytka ma połączenie z siecią Wi-Fi: w trybie na
+biurku stale, w normalnym cyklu na baterii przez kilka sekund okna wysyłki.
+Wysyłką zajmuje się osobne zadanie z kolejką, więc logowanie z zadań o małym
+stosie (np. sterownik Wi-Fi) jest bezpieczne; linie, które nie zmieściły się w
+kolejce, są liczone (`udp_log.dropped` w diagnostyce).
+
+### Diagnostyka urządzenia
+
+Strona **Diagnostyka** w portalu i `GET /api/diag` (`esp`), podobnie jak w
+WIFI_RS:
+
+| Pole | Opis |
+| --- | --- |
+| `uptime_s`, `boot_count`, `build`, `idf` | czas od tego startu, liczba uruchomień (NVS, bez wybudzeń), data kompilacji, ESP-IDF |
+| `chip_temp_c` | temperatura krzemu ESP32-C6 (nie otoczenia; Wi-Fi i CPU ją podnoszą) |
+| `heap` | wolna i zajęta pamięć, minimum od startu, największy wolny blok |
+| `station` | połączenie Wi-Fi: SSID, IP, kanał, BSSID, RSSI |
+| `udp_log` | wysłane i utracone linie logów UDP |
+| `tasks` | zadania FreeRTOS: wolny stos i priorytet |
+| `crash` | ostatnia awaria z partycji core dump: zadanie, PC, `mcause`, przyczyna, SHA-256 ELF; przycisk „Usuń zapis awarii” (`POST /api/crash/clear`) |
 
 Aktualizacja (bez Internetu):
 1. Zbuduj firmware lub pobierz artefakt z CI: `grainmeter-<wersja>-esp32c6-ota.bin`.
@@ -577,8 +670,8 @@ stanu, diagnostyka magistrali/czujników/liczników/błędów, PL/EN, tryb jasny
 ciemny, układ pod telefon. Brak zewnętrznych zasobów (działa na AP bez Internetu).
 
 Wynik jest zapisany w `portal/` i używany bez Node przez oba buildy:
-PC serwuje `portal/index.html` (~130 KiB), firmware wbudowuje
-`portal/index.html.gz` (40,3 KiB, limit 60 KiB sprawdzany przy budowaniu).
+PC serwuje `portal/index.html` (~172 KiB), firmware wbudowuje
+`portal/index.html.gz` (~55 KiB, limit 60 KiB sprawdzany przy budowaniu).
 
 ```bash
 make frontend      # npm ci + verify (format, lint, testy, build) w node:26-alpine
@@ -600,6 +693,10 @@ miejsca, bez własnego serwera. Pokazuje:
   czujnika, brak nowych danych,
 - stan urządzenia z kanału diagnostycznego (bateria, tryb zasilania, Wi-Fi,
   bufor, nieudane wysyłki).
+
+Gdy w wybranym zakresie nie ma danych, strona nadal działa: widać zakładki
+zakresu i historię, a silos pokazuje ostatnie dane spoza zakresu z
+informacją, z kiedy pochodzą.
 
 Przy pierwszym wejściu podajesz **Channel ID** i **Read API Key** (klucz
 *odczytu* z zakładki API Keys – nie klucz zapisu) oraz opcjonalnie kanał
@@ -679,12 +776,17 @@ bez sekretów, akcje przypięte do SHA):
    ewentualnie mniejszy pull-up (2,2 kΩ) lub zasilanie sondy z wyższego napięcia
    z konwerterem poziomów.
 2. Pobór prądu w deep sleep całego układu (płytka + sonda + pull-up).
-3. Captive portal na Android/iOS/Windows (automatyczne otwarcie, ręcznie 192.168.4.1).
+3. Captive portal na Android/iOS/Windows z otwartym AP i opcją DHCP 114
+   (automatyczne otwarcie, ręcznie 192.168.4.1). Na laptopie z Linuksem
+   sprawdzone: DNS, przekierowania 302 i otwarty AP.
 4. Rollback: wgranie obrazu, który nie przejdzie samo-testu lub zresetuje się
    przed potwierdzeniem → powrót do poprzedniej wersji; przerwany upload.
 5. Kalibracja pomiaru akumulatora (dzielnik 1 MΩ/1 MΩ, wpływ impedancji na ADC).
 6. Czasy okna Wi-Fi/TLS przy słabym sygnale w silosie, zysk z zapamiętanego
    AP, stałego IP i jednej sesji TLS (pomiar prądu w oknie).
 7. Wybudzenie przyciskiem na GPIO2 (EXT1) i pobór prądu pull-upu w uśpieniu.
-8. Zdalna aktualizacja z prawdziwego serwera HTTPS, a w profilu podpisanym
-   odrzucenie obrazu niepodpisanego / podpisanego innym kluczem.
+8. Zdalna aktualizacja z prawdziwego serwera HTTPS (odczyt manifestu z
+   GitHub Releases sprawdzony na płytce; instalacja nowszej wersji jeszcze
+   nie), a w profilu podpisanym odrzucenie obrazu niepodpisanego /
+   podpisanego innym kluczem.
+9. Zapis i odczyt awarii (core dump) po prawdziwym crashu.

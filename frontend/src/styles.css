@@ -592,6 +592,94 @@ select:focus-visible {
   color: var(--danger);
 }
 
+.result-info {
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+/* Wi-Fi network picker (Config page) */
+.wifi-picker .row-actions {
+  margin-top: 0;
+}
+
+.wifi-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.wifi-list li + li {
+  border-top: 1px solid var(--border);
+}
+
+.wifi-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wifi-item:hover,
+.wifi-item:focus-visible {
+  background: var(--surface-2);
+}
+
+.wifi-item.is-selected {
+  background: var(--accent-soft);
+}
+
+.wifi-ssid {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.wifi-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+
+.wifi-bars i {
+  width: 3px;
+  background: var(--border);
+  border-radius: 1px;
+}
+
+.wifi-bars i:nth-child(1) {
+  height: 25%;
+}
+.wifi-bars i:nth-child(2) {
+  height: 50%;
+}
+.wifi-bars i:nth-child(3) {
+  height: 75%;
+}
+.wifi-bars i:nth-child(4) {
+  height: 100%;
+}
+
+.bars-1 i:nth-child(-n + 1),
+.bars-2 i:nth-child(-n + 2),
+.bars-3 i:nth-child(-n + 3),
+.bars-4 i:nth-child(-n + 4) {
+  background: var(--accent);
+}
+
 .notice {
   background: var(--surface-2);
   color: var(--muted);

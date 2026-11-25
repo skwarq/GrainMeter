@@ -42,6 +42,7 @@ bool GrainMeter::begin() {
   map_.clear();
   const char* err = nullptr;
   configOk_ = configLoad(*p_.store, &cfg_, &map_, &err);
+  p_.sys->applyLogging(cfg_);
   if (!configOk_) {
     recordError("config: %s", err != nullptr ? err : "load failed");
   }
@@ -741,8 +742,103 @@ bool GrainMeter::applyConfig(const Form& form, char* err, size_t cap) {
                    // save
   }
   cfg_ = next;
+  p_.sys->applyLogging(cfg_);
   GM_LOGI(kTag, "configuration saved");
   return true;
+}
+
+// ------------------------------------------------------------- wifi join ----
+
+bool GrainMeter::wifiJoinRequest(const Form& form, char* err, size_t cap) {
+  if (joinState_ == JoinState::Pending || joinState_ == JoinState::Running) {
+    snprintf(err, cap, "a connection attempt is already running");
+    return false;
+  }
+  char ssid[40] = "";
+  if (!form.get("wifi_ssid", ssid, sizeof(ssid)) || ssid[0] == '\0') {
+    snprintf(err, cap, "wifi_ssid required");
+    return false;
+  }
+  Config next = cfg_;
+  if (!configApplyForm(form, limits_, &next, err, cap)) {
+    return false;
+  }
+  joinCfg_ = next;
+  snprintf(joinSsid_, sizeof(joinSsid_), "%s", next.wifiSsid);
+  joinState_ = JoinState::Pending;
+  joinMsg_[0] = '\0';
+  joinIp_[0] = '\0';
+  joinRssi_ = 0;
+  GM_LOGI(kTag, "Wi-Fi join requested: '%s'", joinCfg_.wifiSsid);
+  return true;
+}
+
+bool GrainMeter::wifiJoinTake(Config* candidate) {
+  if (joinState_ != JoinState::Pending) {
+    return false;
+  }
+  joinState_ = JoinState::Running;
+  *candidate = joinCfg_;
+  return true;
+}
+
+void GrainMeter::wifiJoinFinish(const Config& candidate, bool ok,
+                                const char* msg) {
+  joinRssi_ = ok ? p_.net->rssi() : 0;
+  snprintf(joinIp_, sizeof(joinIp_), "%s", ok ? p_.net->ipText() : "");
+  if (ok) {
+    // Only the network fields: the rest may have been edited meanwhile.
+    Config next = cfg_;
+    memcpy(next.wifiSsid, candidate.wifiSsid, sizeof(next.wifiSsid));
+    memcpy(next.wifiPass, candidate.wifiPass, sizeof(next.wifiPass));
+    memcpy(next.staticIp, candidate.staticIp, sizeof(next.staticIp));
+    memcpy(next.gateway, candidate.gateway, sizeof(next.gateway));
+    memcpy(next.netmask, candidate.netmask, sizeof(next.netmask));
+    memcpy(next.dns, candidate.dns, sizeof(next.dns));
+    if (!configSave(*p_.store, next)) {
+      recordError("config: storage write failed");
+      snprintf(joinMsg_, sizeof(joinMsg_),
+               "connected, but saving the configuration failed");
+      joinState_ = JoinState::Failed;
+      return;
+    }
+    cfg_ = next;
+    p_.sys->applyLogging(cfg_);
+    snprintf(joinMsg_, sizeof(joinMsg_), "connected and saved");
+    joinState_ = JoinState::Ok;
+    GM_LOGI(kTag, "Wi-Fi join: connected to '%s', IP %s, saved", cfg_.wifiSsid,
+            joinIp_);
+  } else {
+    snprintf(joinMsg_, sizeof(joinMsg_), "%s",
+             msg != nullptr && msg[0] != '\0' ? msg : "connection failed");
+    joinState_ = JoinState::Failed;
+    GM_LOGW(kTag, "Wi-Fi join failed: %s", joinMsg_);
+  }
+  memset(&joinCfg_, 0, sizeof(joinCfg_));  // drop the candidate password
+}
+
+void GrainMeter::runWifiJoin() {
+  Config candidate;
+  if (!wifiJoinTake(&candidate)) {
+    return;
+  }
+  char err[96] = "";
+  const bool ok =
+      p_.net->connect(candidate, kWifiConnectTimeoutMs, err, sizeof(err));
+  wifiJoinFinish(candidate, ok, err);
+  memset(&candidate, 0, sizeof(candidate));
+}
+
+void GrainMeter::writeWifiJoin(JsonWriter& w) {
+  static const char* const kNames[] = {"idle", "pending", "running", "ok",
+                                       "failed"};
+  w.beginObject()
+      .kv("state", kNames[static_cast<int>(joinState_)])
+      .kv("ssid", joinSsid_)
+      .kv("message", joinMsg_)
+      .kv("ip", joinIp_)
+      .kv("rssi", static_cast<int64_t>(joinRssi_))
+      .endObject();
 }
 
 bool GrainMeter::mapAssign(const char* romHex, long point, long heightCm,
@@ -1040,6 +1136,7 @@ void GrainMeter::writeStatus(JsonWriter& w) {
       .kv("state", p_.net->stateText())
       .kv("ssid", cfg_.wifiSsid)
       .kv("rssi", static_cast<int64_t>(p_.net->rssi()))
+      .kv("ip", p_.net->ipText())
       .endObject();
   w.kvb("config_ok", configOk_)
       .kvb("upload_configured", cfg_.uploadConfigured());

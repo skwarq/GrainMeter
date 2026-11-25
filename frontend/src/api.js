@@ -211,6 +211,12 @@ export async function getHistoryPage(from, to, signal) {
 // ---- actions (password) ----------------------------------------------------
 
 export const scan = () => post('/api/scan', null, SLOW_TIMEOUT_MS);
+/** Nearby Wi-Fi networks: {networks:[{ssid, rssi, channel, secure}]}, strongest first. */
+export const wifiScan = () => post('/api/wifi/scan', null, SLOW_TIMEOUT_MS);
+/** Starts a connection attempt (wifi_ssid, wifi_pass, static IP fields); poll getWifiJoin. */
+export const wifiJoin = (form) => post('/api/wifi/join', form);
+/** {state: idle|pending|running|ok|failed, ssid, message, ip, rssi} */
+export const getWifiJoin = (signal) => request('GET', '/api/wifi/join', { signal, timeout: 4000 });
 export const measure = (store) => post('/api/measure', store ? { store: 1 } : null, SLOW_TIMEOUT_MS);
 export const uploadNow = () => post('/api/upload', null, 90000);
 /** Remote update: read the manifest now / download, verify and install. */
@@ -223,6 +229,8 @@ export const automap = () => post('/api/automap');
 export const restart = () => post('/api/restart');
 export const exitService = () => post('/api/service/exit');
 export const simAction = (args) => post('/api/sim', args, SLOW_TIMEOUT_MS);
+/** Erases the stored crash record (core dump) on the ESP32. */
+export const clearCrash = () => post('/api/crash/clear');
 
 /** Saves configuration; on success the new service password (if any) replaces the stored one. */
 export async function saveConfig(form) {

@@ -48,6 +48,12 @@ struct Config {
   char gateway[16];
   char netmask[16];
   char dns[16];
+  // Log forwarding over UDP (like WIFI_RS), only while the station link is
+  // up. logHost empty = broadcast on the local network.
+  uint32_t logUdp;    // 0 off, 1 on
+  uint32_t logLevel;  // 1 error, 2 warning, 3 info, 4 debug
+  char logHost[16];
+  uint32_t logPort;
 
   bool uploadConfigured() const {
     return channelId != 0 && writeKey[0] != '\0' && reportUrl[0] != '\0';

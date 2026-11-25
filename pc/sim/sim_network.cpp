@@ -23,9 +23,32 @@ bool SimNetwork::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
                   cfg.wifiSsid);
     return false;
   }
+  if (std::strcmp(cfg.wifiSsid, "Neighbour") == 0) {
+    clock_.sleepMs(3000);
+    std::snprintf(err, errCap, "wrong Wi-Fi password for 'Neighbour'");
+    connected_ = false;
+    return false;
+  }
   clock_.sleepMs(1500);  // association + DHCP
   connected_ = true;
   return true;
+}
+
+int SimNetwork::scan(gm::WifiNetwork* out, int max) {
+  static const gm::WifiNetwork kNets[] = {
+      {"SimulatedWiFi", -58, 6, true},
+      {"Neighbour", -71, 1, true},
+      {"", -60, 11, true},
+      {"SimulatedWiFi", -80, 6, true},
+      {"Silo-Open", -66, 11, false},
+  };
+  int n = 0;
+  for (const gm::WifiNetwork& w : kNets) {
+    if (n >= max) break;
+    out[n++] = w;
+  }
+  clock_.sleepMs(2000);
+  return n;
 }
 
 bool SimNetwork::syncTime(uint32_t timeoutMs) {

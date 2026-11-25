@@ -98,3 +98,23 @@ TEST_F(ConfigTest, JsonNeverContainsSecrets) {
   EXPECT_NE(j.find("\"wifi_pass_set\":true"), std::string::npos);
   EXPECT_NE(j.find("\"svc_pass_set\":true"), std::string::npos);
 }
+
+TEST_F(ConfigTest, UdpLogSettings) {
+  EXPECT_EQ(cfg.logUdp, 0u);
+  EXPECT_EQ(cfg.logLevel, 3u);
+  EXPECT_EQ(cfg.logPort, 5514u);
+  EXPECT_STREQ(cfg.logHost, "");
+  ASSERT_TRUE(apply(
+      "log_udp=1&log_level=4&log_host=192.168.0.105&log_port=9000", &cfg, &err))
+      << err;
+  EXPECT_EQ(cfg.logUdp, 1u);
+  EXPECT_EQ(cfg.logLevel, 4u);
+  EXPECT_STREQ(cfg.logHost, "192.168.0.105");
+  EXPECT_EQ(cfg.logPort, 9000u);
+  ASSERT_TRUE(apply("log_host=", &cfg, &err));  // broadcast
+  EXPECT_STREQ(cfg.logHost, "");
+  EXPECT_FALSE(apply("log_udp=2", &cfg, &err));
+  EXPECT_FALSE(apply("log_level=0", &cfg, &err));
+  EXPECT_FALSE(apply("log_port=70000", &cfg, &err));
+  EXPECT_FALSE(apply("log_host=pc.local", &cfg, &err));
+}

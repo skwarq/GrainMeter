@@ -40,8 +40,9 @@ int dnsBuildReply(const uint8_t* req, int len, uint32_t ip, uint8_t* out,
   out[8] = out[9] = out[10] = out[11] = 0;
   int n = qend;
   if (qtype == 1) {
+    // TTL 0: phones must not cache the portal address after the window.
     const uint8_t answer[16] = {0xC0, 0x0C, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
-                                0x00, 0x3C, 0x00, 0x04, 0,    0,    0,    0};
+                                0x00, 0x00, 0x00, 0x04, 0,    0,    0,    0};
     memcpy(out + n, answer, sizeof(answer));
     memcpy(out + n + 12, &ip, 4);  // already network order
     n += 16;

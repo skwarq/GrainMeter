@@ -231,3 +231,69 @@ TEST_F(PortalTest, RemoteUpdateButtonsNeedPassword) {
   EXPECT_NE(r->body.find("no update URL"), std::string::npos);
   EXPECT_NE(r->body.find("\"restarting\":false"), std::string::npos);
 }
+
+TEST_F(PortalTest, WifiScanListsUniqueVisibleNetworksStrongestFirst) {
+  EXPECT_EQ(post("/api/wifi/scan", "", false)->status, 401);
+  auto r = post("/api/wifi/scan", "");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200) << r->body;
+  const std::string& b = r->body;
+  // duplicate collapsed to the strongest entry, hidden network dropped
+  EXPECT_EQ(b.find("SimulatedWiFi"), b.rfind("SimulatedWiFi")) << b;
+  EXPECT_NE(b.find("\"ssid\":\"SimulatedWiFi\",\"rssi\":-58"),
+            std::string::npos);
+  EXPECT_EQ(b.find("\"ssid\":\"\""), std::string::npos);
+  EXPECT_LT(b.find("SimulatedWiFi"), b.find("Silo-Open"));
+  EXPECT_LT(b.find("Silo-Open"), b.find("Neighbour"));
+  EXPECT_NE(b.find("\"ssid\":\"Silo-Open\",\"rssi\":-66,\"channel\":11,"
+                   "\"secure\":false"),
+            std::string::npos);
+}
+
+TEST_F(PortalTest, WifiJoinSavesOnlyAfterSuccessfulConnection) {
+  EXPECT_EQ(post("/api/wifi/join", "wifi_ssid=Silo-Open", false)->status, 401);
+  EXPECT_EQ(post("/api/wifi/join", "wifi_pass=abcdefgh")->status, 400);
+  EXPECT_NE(cli->Get("/api/wifi/join")->body.find("\"state\":\"idle\""),
+            std::string::npos);
+
+  // wrong password: reported, configuration unchanged
+  auto r = post("/api/wifi/join", "wifi_ssid=Neighbour&wifi_pass=wrongpass1");
+  ASSERT_EQ(r->status, 200) << r->body;
+  EXPECT_NE(cli->Get("/api/wifi/join")->body.find("\"state\":\"pending\""),
+            std::string::npos);
+  EXPECT_EQ(post("/api/wifi/join", "wifi_ssid=Neighbour")->status, 400);
+  t.dev->tick();
+  r = cli->Get("/api/wifi/join");
+  EXPECT_NE(r->body.find("\"state\":\"failed\""), std::string::npos) << r->body;
+  EXPECT_NE(r->body.find("wrong Wi-Fi password"), std::string::npos);
+  EXPECT_NE(
+      cli->Get("/api/config")->body.find("\"wifi_ssid\":\"SimulatedWiFi\""),
+      std::string::npos);
+
+  // success: saved with the IP settings, IP and RSSI reported
+  r = post("/api/wifi/join",
+           "wifi_ssid=Silo-Open&wifi_pass_clear=1&static_ip=192.168.0.50&"
+           "gateway=192.168.0.1&netmask=255.255.255.0&dns=");
+  ASSERT_EQ(r->status, 200) << r->body;
+  t.dev->tick();
+  r = cli->Get("/api/wifi/join");
+  EXPECT_NE(r->body.find("\"state\":\"ok\""), std::string::npos) << r->body;
+  EXPECT_NE(r->body.find("\"ip\":\"192.168.0.50\""), std::string::npos);
+  EXPECT_EQ(r->body.find("wifi_pass"), std::string::npos);
+  const std::string cfg = cli->Get("/api/config")->body;
+  EXPECT_NE(cfg.find("\"wifi_ssid\":\"Silo-Open\""), std::string::npos) << cfg;
+  EXPECT_NE(cfg.find("\"wifi_pass_set\":false"), std::string::npos);
+  EXPECT_NE(cfg.find("\"static_ip\":\"192.168.0.50\""), std::string::npos);
+}
+
+TEST_F(PortalTest, UdpLogSettingsSurviveRestart) {
+  auto r = post("/api/config", "log_udp=1&log_level=2&log_host=&log_port=5514");
+  ASSERT_EQ(r->status, 200) << r->body;
+  t.dev->restart("test");
+  const std::string cfg = cli->Get("/api/config")->body;
+  EXPECT_NE(cfg.find("\"log_udp\":true,\"log_level\":2,\"log_host\":\"\","
+                     "\"log_port\":5514"),
+            std::string::npos)
+      << cfg;
+  EXPECT_EQ(post("/api/crash/clear", "")->status, 400);  // PC: no core dump
+}

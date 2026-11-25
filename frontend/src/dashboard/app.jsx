@@ -64,12 +64,24 @@ export function App() {
       ? loadFeed({ channelId: settings.diagChannelId, readKey: settings.diagReadKey, startMs })
       : Promise.resolve(null);
     const [m, d] = await Promise.allSettled([main, diag]);
+    // Nothing in the selected range: fetch the newest entry anyway, so the
+    // page still shows when the device last reported and what it measured.
+    const newest = (r, channelId, readKey) =>
+      r.status === 'fulfilled' && r.value && r.value.entries.length === 0
+        ? loadFeed({ channelId, readKey, results: 1 }).catch(() => null)
+        : Promise.resolve(null);
+    const [mLast, dLast] = await Promise.all([
+      newest(m, settings.channelId, settings.readKey),
+      settings.diagChannelId ? newest(d, settings.diagChannelId, settings.diagReadKey) : Promise.resolve(null),
+    ]);
     setNow(Date.now());
     setState({
       loading: false,
       main: m.status === 'fulfilled' ? m.value : null,
+      mainLast: mLast,
       error: m.status === 'rejected' ? m.reason : null,
       diag: d.status === 'fulfilled' ? d.value : null,
+      diagLast: dLast,
       diagError: d.status === 'rejected' ? d.reason : null,
     });
   }, [settings, range]);
@@ -122,10 +134,13 @@ export function App() {
   }
 
   const feed = state.main;
-  const lastEntry = feed && feed.entries[feed.entries.length - 1];
+  // Newest data: from the range, or the last entry outside it.
+  const inRange = !!(feed && feed.entries.length > 0);
+  const current = inRange ? feed : state.mainLast && state.mainLast.entries.length > 0 ? state.mainLast : feed;
+  const lastEntry = current && current.entries[current.entries.length - 1];
   const ageS = lastEntry ? Math.max(0, Math.round((now - lastEntry.t) / 1000)) : null;
   const future = lastEntry ? isFuture(lastEntry.t, now) : false;
-  const alerts = feed ? findAlerts(feed, settings, now) : [];
+  const alerts = current ? findAlerts(current, settings, now) : [];
   const stale = alerts.some((a) => a.kind === 'stale');
 
   return (
@@ -171,31 +186,46 @@ export function App() {
 
         {feed && (
           <>
-            <AlertsCard feed={feed} settings={{ ...ALERT_DEFAULTS, ...settings }} now={now} />
+            <AlertsCard feed={current} settings={{ ...ALERT_DEFAULTS, ...settings }} now={now} />
 
-            {feed.entries.length === 0 ? (
-              <Card>
-                <p class="muted">{t('dash.noData', { range: t('dash.range.' + range) })}</p>
-              </Card>
-            ) : (
-              <div class="dash-grid">
-                <Card title={t('dash.siloNow')} icon="overview" class="dash-silo">
-                  <div class="silo-wrap">
-                    <div>
-                      <SiloView points={latestPoints(feed)} />
-                      <TempLegend />
+            <div class="dash-grid">
+              <Card title={t('dash.siloNow')} icon="overview" class="dash-silo">
+                {lastEntry ? (
+                  <>
+                    {!inRange && (
+                      <p class="notice small">
+                        {t('dash.outOfRange', {
+                          range: t('dash.range.' + range),
+                          time: new Date(lastEntry.t).toLocaleString(lang === 'en' ? 'en-GB' : 'pl-PL'),
+                        })}
+                      </p>
+                    )}
+                    <div class="silo-wrap">
+                      <div>
+                        <SiloView points={latestPoints(current)} />
+                        <TempLegend />
+                      </div>
+                      <PointTable feed={current} settings={settings} />
                     </div>
-                    <PointTable feed={feed} settings={settings} />
-                  </div>
-                </Card>
-
-                <HistoryCard feed={feed} range={range} now={now} onRange={(r) => store({ ...settings, range: r })} />
-
-                {settings.diagChannelId && (
-                  <DeviceCard diag={state.diag} error={state.diagError} t={t} now={now} range={range} />
+                  </>
+                ) : (
+                  <p class="muted">{t('dash.channelEmpty')}</p>
                 )}
-              </div>
-            )}
+              </Card>
+
+              <HistoryCard feed={feed} range={range} now={now} onRange={(r) => store({ ...settings, range: r })} />
+
+              {settings.diagChannelId && (
+                <DeviceCard
+                  diag={state.diag}
+                  diagLast={state.diagLast}
+                  error={state.diagError}
+                  t={t}
+                  now={now}
+                  range={range}
+                />
+              )}
+            </div>
           </>
         )}
 
@@ -223,7 +253,7 @@ function isFuture(tMs, nowMs) {
   return tMs - nowMs > FUTURE_TOLERANCE_MS;
 }
 
-function DeviceCard({ diag, error, t, now, range }) {
+function DeviceCard({ diag, diagLast, error, t, now, range }) {
   if (error) {
     return (
       <Card title={t('dash.device')} icon="chip">
@@ -231,11 +261,11 @@ function DeviceCard({ diag, error, t, now, range }) {
       </Card>
     );
   }
-  const d = latestDiag(diag);
+  const d = latestDiag(diag) || latestDiag(diagLast);
   if (!d) {
     return (
       <Card title={t('dash.device')} icon="chip">
-        <p class="muted">{t('dash.noData', { range: t('dash.range.' + range) })}</p>
+        <p class="muted">{t('dash.channelEmpty')}</p>
       </Card>
     );
   }
@@ -281,12 +311,12 @@ function DeviceCard({ diag, error, t, now, range }) {
       />
       <DeviceCharts
         feed={{
-          entries: diag.entries.map((e) => ({
+          entries: (diag ? diag.entries : []).map((e) => ({
             t: e.t,
             values: [e.values[0] === null ? null : e.values[0] / 1000, e.values[1]],
           })),
         }}
-        gapMs={gapThreshold(diag) * 8}
+        gapMs={gapThreshold(diag || diagLast) * 8}
         start={now - RANGES[range]}
         end={now}
       />
