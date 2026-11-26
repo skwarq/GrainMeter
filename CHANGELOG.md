@@ -4,6 +4,14 @@ Co wnosi każda wersja oprogramowania GrainMeter. Urządzenie samo tylko
 informuje o nowej wersji; instalacja jest zawsze decyzją użytkownika
 (portal → Aktualizacja → Zainstaluj).
 
+## Niewydane
+
+- Dashboard i strona zdalna mają wspólne ustawienia: zdalny dostęp (broker,
+  ID urządzenia, TalkBack) wpisujesz raz – w Ustawieniach dashboardu albo w
+  `remote.html`; hasła zapisują się tylko na życzenie.
+- `remote.html`: przy uśpionej płytce link „Dane z ThingSpeak”.
+- Link z `scripts/remote_link.py` wypełnia też ID kanałów w dashboardzie.
+
 ## 0.4.0
 
 2026-11-26

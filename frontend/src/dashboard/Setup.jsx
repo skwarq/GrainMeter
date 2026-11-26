@@ -2,6 +2,17 @@ import { useState } from 'preact/hooks';
 import { useI18n } from '../components/i18n.js';
 import { Card, Button, Logo } from '../components/ui.jsx';
 import { DEFAULTS, validateSettings } from './settings.js';
+import { loadRemote, saveRemote } from '../lib/remote-store.js';
+
+const REMOTE_INPUTS = [
+  ['url', 'text'],
+  ['username', 'text'],
+  ['password', 'password'],
+  ['id', 'text'],
+  ['servicePassword', 'password'],
+  ['talkbackId', 'text'],
+  ['talkbackKey', 'password'],
+];
 
 function Field({ label, hint, children }) {
   return (
@@ -19,6 +30,10 @@ export function Setup({ initial, onSave, onCancel, onForget }) {
   const [f, setF] = useState({ ...DEFAULTS, ...(initial || {}) });
   const [err, setErr] = useState('');
   const set = (k) => (e) => setF({ ...f, [k]: e.currentTarget.value });
+  // Remote access: the same stored entry as remote.html (one place to type).
+  const [remote] = useState(loadRemote);
+  const [r, setR] = useState(remote.form);
+  const [rememberSecrets, setRememberSecrets] = useState(remote.remembered);
 
   const submit = (e) => {
     e.preventDefault();
@@ -31,6 +46,11 @@ export function Setup({ initial, onSave, onCancel, onForget }) {
     };
     const v = validateSettings(clean);
     if (v) return setErr(t(v));
+    try {
+      saveRemote(r, rememberSecrets);
+    } catch {
+      /* storage blocked: the dashboard settings below still apply */
+    }
     onSave({
       ...clean,
       maxTemp: clean.maxTemp === '' ? null : Number(clean.maxTemp),
@@ -77,6 +97,32 @@ export function Setup({ initial, onSave, onCancel, onForget }) {
           <Field label="Read API Key" hint={t('dash.optional')}>
             <input {...key('diagReadKey')} />
           </Field>
+        </div>
+      </Card>
+
+      <Card title={t('dash.remoteCard')} icon="wifi">
+        <p class="muted small">{t('dash.remoteHint')}</p>
+        <div class="form-grid">
+          {REMOTE_INPUTS.map(([k, type]) => (
+            <Field key={k} label={t('connection.' + k)}>
+              <input
+                type={type}
+                autocomplete="off"
+                autocapitalize="off"
+                spellcheck={false}
+                value={r[k] || ''}
+                onInput={(e) => setR({ ...r, [k]: e.currentTarget.value })}
+              />
+            </Field>
+          ))}
+          <label class="check field-wide">
+            <input
+              type="checkbox"
+              checked={rememberSecrets}
+              onChange={(e) => setRememberSecrets(e.currentTarget.checked)}
+            />
+            <span>{t('dash.rememberSecrets')}</span>
+          </label>
         </div>
       </Card>
 

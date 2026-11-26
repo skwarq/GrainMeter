@@ -8,10 +8,10 @@ import { SessionBar } from './SessionBar.jsx';
 import { sessionSnapshot } from './session.js';
 import '../styles.css';
 import '../components/history.css';
+import { REMOTE_FIELDS as FIELDS, loadRemote, saveRemote } from '../lib/remote-store.js';
 import './remote.css';
 
-const KEY = 'gm.remote';
-const FIELDS = ['url', 'username', 'password', 'id', 'servicePassword', 'talkbackId', 'talkbackKey', 'minutes'];
+const DASH_KEY = 'gm.dashboard.v1';
 // A link from scripts/remote_link.py carries the fields in the URL fragment
 // (#cfg=<base64 JSON>); the fragment never reaches the server and is cleared
 // from the address bar right after reading.
@@ -22,22 +22,34 @@ function fromLink() {
   try {
     const b = atob(m[1].replace(/-/g, '+').replace(/_/g, '/'));
     const v = JSON.parse(new TextDecoder().decode(Uint8Array.from(b, (c) => c.charCodeAt(0))));
+    // ThingSpeak channel IDs in the link prefill the dashboard (same origin).
+    if (/^\d{1,9}$/.test(v.channelId || '')) {
+      try {
+        const d = JSON.parse(localStorage.getItem(DASH_KEY)) || {};
+        localStorage.setItem(
+          DASH_KEY,
+          JSON.stringify({
+            ...d,
+            channelId: d.channelId || v.channelId,
+            diagChannelId: d.diagChannelId || (/^\d{1,9}$/.test(v.diagChannelId || '') ? v.diagChannelId : ''),
+          }),
+        );
+      } catch {
+        /* no storage */
+      }
+    }
     return Object.fromEntries(FIELDS.filter((k) => typeof v[k] === 'string').map((k) => [k, v[k]]));
   } catch {
     return null;
   }
 }
 function saved() {
-  let stored = {};
-  try {
-    stored = JSON.parse(localStorage.getItem(KEY)) || {};
-  } catch {
-    /* no storage */
-  }
+  // Shared with the dashboard settings (Settings -> Remote access).
+  const stored = loadRemote();
   const link = fromLink();
-  // Remembering is opt-in: only a form already stored in this browser starts
-  // with "remember" ticked, never one that came in a #cfg link.
-  return { form: link ? { ...stored, ...link } : stored, remembered: !!stored.url };
+  // Remembering passwords is opt-in: only secrets already stored in this
+  // browser tick "remember", never a #cfg link.
+  return { form: link ? { ...stored.form, ...link } : stored.form, remembered: stored.remembered };
 }
 function Remote() {
   const [initial] = useState(saved);
@@ -54,10 +66,9 @@ function Remote() {
   const [ready, setReady] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const t = (key) => translate(lang, 'connection.' + key);
-  const persist = (enabled, value) => {
+  const persist = (remember, value) => {
     try {
-      if (enabled) localStorage.setItem(KEY, JSON.stringify(value));
-      else localStorage.removeItem(KEY);
+      saveRemote(value, remember);
     } catch {
       setError(t('storageError'));
     }
@@ -145,6 +156,7 @@ function Remote() {
         <div class="remote-head">
           <h1>{ready && form.id ? form.id : t('title')}</h1>
           <span role="status">{stateText}</span>
+          {status.state !== 'online' && <a href="./">{t('dashboard')} →</a>}
           <button type="button" onClick={() => setLang(lang === 'pl' ? 'en' : 'pl')}>
             {lang === 'pl' ? 'EN' : 'PL'}
           </button>
@@ -196,7 +208,7 @@ function Remote() {
                     onInput={(e) => {
                       const value = { ...form, [key]: e.currentTarget.value };
                       setForm(value);
-                      if (remember) persist(true, value);
+                      persist(remember, value);
                     }}
                   />
                 </label>

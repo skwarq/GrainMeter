@@ -21,7 +21,9 @@ export default {
   'connection.talkbackId': 'ID TalkBack (opcjonalne)',
   'connection.talkbackKey': 'Klucz TalkBack (opcjonalny)',
   'connection.minutes': 'Minuty sesji (1–60)',
-  'connection.remember': 'Zapamiętaj na tym urządzeniu (w tym hasła)',
+  'connection.remember':
+    'Zapamiętaj hasła w tej przeglądarce (reszta zapisuje się zawsze, wspólnie z Ustawieniami dashboardu)',
+  'connection.dashboard': 'Dane z ThingSpeak',
   'connection.connect': 'Połącz',
   'connection.disconnect': 'Rozłącz',
   'connection.wake': 'Wybudź',
@@ -572,6 +574,10 @@ export default {
   'dash.channel': 'Kanał {id}',
   'dash.settings': 'Ustawienia',
   'dash.remote': 'Połączenie zdalne',
+  'dash.remoteCard': 'Zdalny dostęp (MQTT, opcjonalnie)',
+  'dash.remoteHint':
+    'Te same pola co w Połączeniu zdalnym (remote.html) – wpisane tu, są tam od razu. Puste = bez zdalnego dostępu.',
+  'dash.rememberSecrets': 'Zapamiętaj hasła w tej przeglądarce',
   'dash.err.auth': 'Brak dostępu do kanału – sprawdź Channel ID i Read API Key.',
   'dash.err.not_found': 'Nie ma takiego kanału – sprawdź Channel ID.',
   'dash.err.http': 'ThingSpeak zwrócił błąd HTTP {status}. Spróbuj później.',

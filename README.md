@@ -981,7 +981,10 @@ Wi-Fi przy urządzeniu, hasło serwisowe `svc_pass` oraz broker MQTT.
    „Połączenie zdalne” w dashboardzie) albo link z wypełnionymi polami:
    `python3 scripts/remote_link.py` (bierze `web_*`, `remote_id`, `svc_pass`
    i TalkBack z `config/device.conf`; dane są we fragmencie `#`, nie idą do
-   serwera; lokalny build: `--base http://127.0.0.1:8765/remote.html`). Podaj
+   serwera; lokalny build: `--base http://127.0.0.1:8765/remote.html`;
+   wypełnia też ID kanałów w ustawieniach dashboardu). Pola można też wpisać
+   raz w dashboardzie: **Ustawienia → Zdalny dostęp** – obie strony używają
+   tych samych zapisanych ustawień (hasła tylko z „Zapamiętaj hasła”). Podaj
    `wss://<host>:8084/mqtt`, login i hasło **przeglądarki**, ID urządzenia
    oraz jego hasło serwisowe. Opcjonalnie podaj ID i klucz TalkBack, aby
    użyć „Wybudź” na 1–60 minut. Dane pozostają w pamięci karty; opcja

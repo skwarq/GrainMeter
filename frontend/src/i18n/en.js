@@ -20,7 +20,9 @@ export default {
   'connection.talkbackId': 'TalkBack ID (optional)',
   'connection.talkbackKey': 'TalkBack key (optional)',
   'connection.minutes': 'Session minutes (1–60)',
-  'connection.remember': 'Remember on this device (including passwords)',
+  'connection.remember':
+    'Remember passwords in this browser (the rest is always saved, shared with the dashboard Settings)',
+  'connection.dashboard': 'ThingSpeak data',
   'connection.connect': 'Connect',
   'connection.disconnect': 'Disconnect',
   'connection.wake': 'Wake',
@@ -569,6 +571,10 @@ export default {
   'dash.lastMeasurement': 'Last measurement',
   'dash.channel': 'Channel {id}',
   'dash.remote': 'Remote connection',
+  'dash.remoteCard': 'Remote access (MQTT, optional)',
+  'dash.remoteHint':
+    'The same fields as in Remote connection (remote.html) – entered here, they are there at once. Empty = no remote access.',
+  'dash.rememberSecrets': 'Remember passwords in this browser',
   'dash.settings': 'Settings',
   'dash.err.auth': 'No access to the channel – check Channel ID and Read API Key.',
   'dash.err.not_found': 'No such channel – check the Channel ID.',

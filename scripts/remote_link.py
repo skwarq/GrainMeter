@@ -44,6 +44,10 @@ def main():
         "servicePassword": c.get("svc_pass", ""),
         "talkbackId": c.get("talkback_id", ""),
         "talkbackKey": c.get("talkback_key", ""),
+        # Dashboard (same origin): channel IDs fill its Settings if empty.
+        # Read API keys are not in device.conf (the device has write keys).
+        "channelId": c.get("ts_channel", ""),
+        "diagChannelId": c.get("diag_channel", ""),
     }
     missing = [k for k in ("web_url", "web_user", "web_pass", "remote_id", "svc_pass") if k not in c]
     if missing:
