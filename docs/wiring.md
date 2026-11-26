@@ -1,9 +1,17 @@
 # Podłączenie GrainMeter (FireBeetle 2 ESP32-C6)
 
+Analiza płytki, akumulatora i zasilania: [hardware.md](hardware.md).
+
 ![Schemat podłączenia](wiring.svg)
 
 Numeracja pinów złącza **P1** pochodzi ze schematu DFRobot DFR1075 (V1.0 i
 V1.1). Przed lutowaniem porównaj ją z opisem na płytce.
+
+**Położenie:** P1 to listwa po stronie złącza baterii; **pin 1 (VIN) jest
+pierwszy przy złączu baterii**, dalej 3V3, GND, SCL, SDA, IO5, IO4, IO3,
+IO2… (pinout DFRobot: [datasheets/DFR1075-pinout.png](datasheets/DFR1075-pinout.png)).
+Uwaga: GND jest **trzeci**, drugi to 3V3 – panel (+5 V) na pin 1, minus na
+pin 3.
 
 ## Połączenia
 
@@ -16,7 +24,7 @@ V1.1). Przed lutowaniem porównaj ją z opisem na płytce.
 | Sonda pin 4 (zielony) | – | niepodłączony (załączanie STW-100) |
 | Przycisk serwisowy (NO) | P1-9 **IO2/A1** (GPIO2) ↔ **GND** | budzi z deep sleep bez resetu |
 | Rezystor 10 kΩ | między **GPIO2** a **3V3** | pull-up przycisku |
-| Panel słoneczny 5 V: + / − | P1-1 **VCC** / **GND** | wejście ładowarki CN3165 (5 V), nie 3V3 |
+| Panel słoneczny 5 V (DFRobot FIT0601, wyjście USB-A ze stabilizatorem): + / − | P1-1 **VCC** / **GND** (albo USB-C płytki) | wejście ładowarki CN3165 (5 V), nie 3V3; szczegóły: [hardware.md](hardware.md#panel-słoneczny-dfrobot-fit0601-monocrystalline-solar-panel-5v-1a) |
 | Akumulator Li-ion 1S 3,7 V | złącze **BAT** | sprawdź polaryzację wtyku |
 
 Już na płytce (nic nie trzeba dolutowywać):
@@ -71,7 +79,7 @@ Wersja tekstowa:
 | Rezystor 10 kΩ 0,25 W | 1 | pull-up przycisku |
 | Przycisk chwilowy NO, wodoszczelny (np. IP67, M12/M16) | 1 | przycisk serwisowy na obudowie |
 | Akumulator Li-ion 1S (18650 z zabezpieczeniem lub Li-Po) | 1 | z wtykiem pasującym do złącza BAT |
-| Panel słoneczny 5–6 V, 1–3 W | 1 | wyjście 5 V na VCC |
+| Panel słoneczny DFRobot FIT0601 (5 V 1 A, 6 W, USB-A ze stabilizatorem) | 1 | wyjście 5 V na VCC albo USB-C; akumulator AKYGA LP475085 2500 mAh |
 | Obudowa IP65 + dławiki kablowe | 1 | |
 | Opcjonalnie: rezystor 100 Ω, dioda TVS/ESD 3,3 V | 1+1 | ochrona DATA na długim kablu |
 
