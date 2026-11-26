@@ -114,9 +114,9 @@ class SystemPort {
   // Version of a firmware that failed its first boot and was rolled back
   // ("" if none). Remote updates never retry that version.
   virtual const char* rejectedFirmware() { return ""; }
-  // Called after the configuration was loaded or changed: platforms that
-  // forward logs (ESP32: UDP, like WIFI_RS) apply log_udp/level/host/port.
-  virtual void applyLogging(const Config& cfg) { (void)cfg; }
+  // Called after the configuration was loaded or changed (ESP32: UDP log
+  // forwarding, LAN console wake). Runs with the application lock held.
+  virtual void configApplied(const Config& cfg) { (void)cfg; }
 };
 
 }  // namespace gm

@@ -16,9 +16,12 @@
 #include "freertos/task.h"
 #include "hw/battery.h"
 #include "nvs.h"
+#include "platform/power_stats.h"
 #include "platform/wifi_link.h"
 #include "sdkconfig.h"
 #include "service/udp_log.h"
+
+static portMUX_TYPE s_nameMux = portMUX_INITIALIZER_UNLOCKED;
 
 static const char* resetName(esp_reset_reason_t r) {
   switch (r) {
@@ -207,6 +210,7 @@ void EspSystemPort::writeDetails(gm::JsonWriter& w) {
   w.endArray();
 #endif
   writeCrash(w);
+  powerStatsWrite(w);
 }
 
 // Last crash from the core dump partition (like the WIFI_RS crash log):
@@ -248,9 +252,19 @@ void EspSystemPort::writeCrash(gm::JsonWriter& w) {
   w.endObject();
 }
 
-void EspSystemPort::applyLogging(const gm::Config& cfg) {
+void EspSystemPort::configApplied(const gm::Config& cfg) {
   udpLogApply(cfg.logUdp != 0, cfg.logLevel, cfg.logHost,
               static_cast<uint16_t>(cfg.logPort), apSsid);
+  lanWake = cfg.lanWake != 0;
+  portENTER_CRITICAL(&s_nameMux);
+  snprintf(deviceName, sizeof(deviceName), "%s", cfg.deviceName);
+  portEXIT_CRITICAL(&s_nameMux);
+}
+
+void EspSystemPort::copyDeviceName(char* out, size_t cap) {
+  portENTER_CRITICAL(&s_nameMux);
+  snprintf(out, cap, "%s", deviceName);
+  portEXIT_CRITICAL(&s_nameMux);
 }
 
 bool EspSystemPort::platformAction(const char* action, const gm::Form& args,

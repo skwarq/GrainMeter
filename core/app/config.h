@@ -54,6 +54,16 @@ struct Config {
   uint32_t logLevel;  // 1 error, 2 warning, 3 info, 4 debug
   char logHost[16];
   uint32_t logPort;
+  // LAN console: in every upload window announce "hello" over UDP and wait
+  // briefly for the PC script (tools/lan_console.py); while it stays
+  // connected the device does not sleep. 0 off, 1 on.
+  uint32_t lanWake;
+  // Service mode: SoftAP + captive portal (0 = never, USB/LAN console and
+  // the portal over the station link only). With Wi-Fi configured the
+  // station is tried first and the SoftAP starts after apDelayS without a
+  // connection (0 = at once).
+  uint32_t apEnabled;
+  uint32_t apDelayS;
 
   bool uploadConfigured() const {
     return channelId != 0 && writeKey[0] != '\0' && reportUrl[0] != '\0';

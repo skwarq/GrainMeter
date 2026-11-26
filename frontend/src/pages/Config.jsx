@@ -28,6 +28,7 @@ const TEXT_FIELDS = [
   'log_level',
   'log_host',
   'log_port',
+  'ap_delay_s',
 ];
 const SECRET_FIELDS = ['wifi_pass', 'ts_key', 'diag_key'];
 
@@ -385,6 +386,17 @@ export function Config() {
 
       <Card title={t('config.service')} icon="lock">
         <div class="form-grid">
+          <Field label={t('config.apDelay')} hint={t('config.apDelayHint')}>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="0"
+              max="3600"
+              value={f.ap_delay_s}
+              onInput={set('ap_delay_s')}
+            />
+          </Field>
+          {c.ap_enabled === false && <p class="callout field-wide">{t('config.apDisabled')}</p>}
           <Field label={t('config.svcPass')} hint={t('config.svcHint')}>
             <input
               type="password"

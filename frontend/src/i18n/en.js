@@ -146,6 +146,11 @@ export default {
   'config.ssid': 'Network name (SSID)',
   'config.wifiPass': 'Wi-Fi password',
   'config.wifiOpen': 'Open network (clear the stored Wi-Fi password)',
+  'config.apDelay': 'Start SoftAP after [s]',
+  'config.apDelayHint':
+    'In service mode the device first joins the Wi-Fi network; the SoftAP with the captive portal starts only if that fails for this long. 0 = at once.',
+  'config.apDisabled':
+    'SoftAP and captive portal are disabled (ap_enabled 0, change only on the USB or LAN console). The portal is reachable over Wi-Fi only.',
   'config.logs': 'Logs over UDP',
   'config.logUdp': 'Send logs over UDP (like WIFI_RS)',
   'config.logLevel': 'Log level',

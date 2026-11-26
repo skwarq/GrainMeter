@@ -24,6 +24,7 @@ static sockaddr_in s_dst = {};
 static char s_prefix[33] = "";
 static volatile uint32_t s_dropped = 0;
 static volatile uint32_t s_sent = 0;
+static RingbufHandle_t volatile s_tap = nullptr;  // LAN console session
 
 static int logHook(const char* fmt, va_list ap) {
   va_list cp;
@@ -31,7 +32,7 @@ static int logHook(const char* fmt, va_list ap) {
   const int r = s_prev != nullptr ? s_prev(fmt, ap) : vprintf(fmt, ap);
   // Non-blocking: a log line from inside the sender path (lwIP) or a
   // concurrent writer is simply not forwarded.
-  if (s_enabled && s_queue != nullptr &&
+  if ((s_enabled || s_tap != nullptr) && s_fmtLock != nullptr &&
       xSemaphoreTake(s_fmtLock, 0) == pdTRUE) {
     // A log line may arrive in several vprintf calls (log v2): prefix only
     // the first fragment of each line.
@@ -39,13 +40,20 @@ static int logHook(const char* fmt, va_list ap) {
     static bool atLineStart = true;
     int n = atLineStart ? snprintf(line, sizeof(line), "%s ", s_prefix) : 0;
     if (n < 0) n = 0;
+    const int prefixLen = n;
     const int m = vsnprintf(line + n, sizeof(line) - n, fmt, cp);
     if (m > 0) {
       n += m;
       if (n >= static_cast<int>(sizeof(line))) n = sizeof(line) - 1;
       atLineStart = line[n - 1] == '\n';
-      if (xRingbufferSend(s_queue, line, static_cast<size_t>(n), 0) != pdTRUE) {
+      if (s_enabled &&
+          xRingbufferSend(s_queue, line, static_cast<size_t>(n), 0) != pdTRUE) {
         s_dropped = s_dropped + 1;
+      }
+      RingbufHandle_t tap = s_tap;
+      if (tap != nullptr && n > prefixLen) {  // no device prefix on the console
+        xRingbufferSend(tap, line + prefixLen,
+                        static_cast<size_t>(n - prefixLen), 0);
       }
     }
     xSemaphoreGive(s_fmtLock);
@@ -124,6 +132,14 @@ void udpLogApply(bool enabled, uint32_t level, const char* host, uint16_t port,
              host != nullptr && host[0] != '\0' ? host : "255.255.255.255",
              static_cast<unsigned>(port));
   }
+}
+
+// Swapped under the format lock: once this returns, no log hook still uses
+// the previous ring buffer, so the caller may delete it.
+void logTapSet(RingbufHandle_t rb) {
+  if (s_fmtLock != nullptr) xSemaphoreTake(s_fmtLock, portMAX_DELAY);
+  s_tap = rb;
+  if (s_fmtLock != nullptr) xSemaphoreGive(s_fmtLock);
 }
 
 uint32_t udpLogDropped() { return s_dropped; }

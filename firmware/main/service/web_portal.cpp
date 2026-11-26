@@ -191,7 +191,7 @@ esp_err_t webPortalStart() {
   }
   httpd_register_err_handler(s_server, HTTPD_404_NOT_FOUND, notFound);
   touch();
-  ESP_LOGI(kTag, "portal at http://192.168.4.1/");
+  ESP_LOGI(kTag, "HTTP portal started (port 80)");
   return ESP_OK;
 }
 

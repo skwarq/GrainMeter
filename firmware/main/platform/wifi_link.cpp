@@ -8,7 +8,9 @@
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif_sntp.h"
+#include "esp_timer.h"
 #include "esp_wifi.h"
+#include "platform/power_stats.h"
 
 static const char* kTag = "wifi";
 static const EventBits_t kGotIp = BIT0;
@@ -133,6 +135,7 @@ bool WifiLink::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
     snprintf(err, errCap, "invalid static IP configuration");
     return false;
   }
+  powerStatsWifiStart();
   staWanted_ = true;
   if (applyMode() != ESP_OK) {
     snprintf(err, errCap, "Wi-Fi start failed");
@@ -165,6 +168,7 @@ bool WifiLink::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
     const EventBits_t bits =
         xEventGroupWaitBits(events_, kGotIp | kFailed, pdTRUE, pdFALSE, left);
     if (bits & kGotIp) {
+      powerStatsWifiConnected();
       wifi_ap_record_t ap = {};
       if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
         s_apCache.magic = kApCacheMagic;
@@ -225,9 +229,13 @@ void WifiLink::dropStation() {
   staSsid_[0] = '\0';
   ip_[0] = '\0';
   applyMode();
+  powerStatsWifiEnd();
 }
 
 void WifiLink::disconnect() {
+  if (!keepSta_ && connected_ && dropHook_ != nullptr) {
+    dropHook_();
+  }
   if (keepSta_ && connected_) {
     return;  // LAN portal keeps using the link
   }
@@ -290,7 +298,9 @@ bool WifiLink::syncTime(uint32_t timeoutMs) {
   if (esp_netif_sntp_init(&cfg) != ESP_OK) {
     return false;
   }
+  const int64_t t0 = esp_timer_get_time();
   const bool ok = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(timeoutMs)) == ESP_OK;
+  powerStatsSntp(static_cast<uint32_t>((esp_timer_get_time() - t0) / 1000));
   esp_netif_sntp_deinit();
   ESP_LOGI(kTag, "SNTP %s", ok ? "synchronised" : "timeout");
   return ok;

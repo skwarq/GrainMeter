@@ -2,6 +2,7 @@
 #include "hw/board_io.h"
 
 #include "driver/gpio.h"
+#include "driver/rtc_io.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -24,6 +25,8 @@ void boardIoInit() {
   btn.pull_up_en = GPIO_PULLUP_ENABLE;  // board has 10k too
   gpio_config(&btn);
 #if CONFIG_GM_SERVICE_WAKE_GPIO >= 0
+  // deepSleep() hands the pin to the LP IO domain: take it back.
+  rtc_gpio_deinit(static_cast<gpio_num_t>(CONFIG_GM_SERVICE_WAKE_GPIO));
   gpio_config_t wake = {};
   wake.pin_bit_mask = 1ULL << CONFIG_GM_SERVICE_WAKE_GPIO;
   wake.mode = GPIO_MODE_INPUT;

@@ -42,7 +42,7 @@ bool GrainMeter::begin() {
   map_.clear();
   const char* err = nullptr;
   configOk_ = configLoad(*p_.store, &cfg_, &map_, &err);
-  p_.sys->applyLogging(cfg_);
+  p_.sys->configApplied(cfg_);
   if (!configOk_) {
     recordError("config: %s", err != nullptr ? err : "load failed");
   }
@@ -355,8 +355,11 @@ const LastUpload& GrainMeter::upload() {
   if (!p_.net->syncTime(kTimeSyncTimeoutMs) && !p_.clock->wallValid()) {
     p_.http->endSession();
     p_.net->disconnect();
-    ++st_->uploadFailCount;
-    finishUpload(false, -1, "time sync failed; samples kept");
+    // A heartbeat window without samples has nothing to fail with.
+    if (st_->count > 0) ++st_->uploadFailCount;
+    finishUpload(false, -1,
+                 st_->count > 0 ? "time sync failed; samples kept"
+                                : "time sync failed (no samples)");
     return L;
   }
   const uint32_t nowEpoch = p_.clock->epoch();
@@ -742,7 +745,7 @@ bool GrainMeter::applyConfig(const Form& form, char* err, size_t cap) {
                    // save
   }
   cfg_ = next;
-  p_.sys->applyLogging(cfg_);
+  p_.sys->configApplied(cfg_);
   GM_LOGI(kTag, "configuration saved");
   return true;
 }
@@ -803,7 +806,7 @@ void GrainMeter::wifiJoinFinish(const Config& candidate, bool ok,
       return;
     }
     cfg_ = next;
-    p_.sys->applyLogging(cfg_);
+    p_.sys->configApplied(cfg_);
     snprintf(joinMsg_, sizeof(joinMsg_), "connected and saved");
     joinState_ = JoinState::Ok;
     GM_LOGI(kTag, "Wi-Fi join: connected to '%s', IP %s, saved", cfg_.wifiSsid,

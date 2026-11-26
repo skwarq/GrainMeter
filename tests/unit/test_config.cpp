@@ -118,3 +118,20 @@ TEST_F(ConfigTest, UdpLogSettings) {
   EXPECT_FALSE(apply("log_port=70000", &cfg, &err));
   EXPECT_FALSE(apply("log_host=pc.local", &cfg, &err));
 }
+
+TEST_F(ConfigTest, LanWakeOnByDefault) {
+  EXPECT_EQ(cfg.lanWake, 1u);
+  ASSERT_TRUE(apply("lan_wake=0", &cfg, &err)) << err;
+  EXPECT_EQ(cfg.lanWake, 0u);
+  EXPECT_FALSE(apply("lan_wake=2", &cfg, &err));
+}
+
+TEST_F(ConfigTest, SoftApDelayAndSwitch) {
+  EXPECT_EQ(cfg.apEnabled, 1u);
+  EXPECT_EQ(cfg.apDelayS, 60u);
+  ASSERT_TRUE(apply("ap_enabled=0&ap_delay_s=0", &cfg, &err)) << err;
+  EXPECT_EQ(cfg.apEnabled, 0u);
+  EXPECT_EQ(cfg.apDelayS, 0u);
+  EXPECT_FALSE(apply("ap_delay_s=3601", &cfg, &err));
+  EXPECT_FALSE(apply("ap_enabled=yes", &cfg, &err));
+}

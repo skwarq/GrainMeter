@@ -39,6 +39,9 @@ void configDefaults(Config* cfg, const char* defaultReportUrl,
   cfg->logUdp = 0;
   cfg->logLevel = 3;
   cfg->logPort = 5514;
+  cfg->lanWake = 1;
+  cfg->apEnabled = 1;
+  cfg->apDelayS = 60;
   copyStr(cfg->updateUrl, sizeof(cfg->updateUrl),
           defaultUpdateUrl != nullptr ? defaultUpdateUrl : "");
 }
@@ -275,6 +278,9 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
       {"log_level", &next.logLevel, 1, 4,
        "log_level: 1 error, 2 warning, 3 info, 4 debug"},
       {"log_port", &next.logPort, 1, 65535, "log_port: 1..65535"},
+      {"lan_wake", &next.lanWake, 0, 1, "lan_wake: 0 or 1"},
+      {"ap_enabled", &next.apEnabled, 0, 1, "ap_enabled: 0 or 1"},
+      {"ap_delay_s", &next.apDelayS, 0, 3600, "ap_delay_s: 0..3600"},
   };
   for (size_t i = 0; i < sizeof(more) / sizeof(more[0]); ++i) {
     if (!form.has(more[i].name)) {
@@ -427,6 +433,9 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
       {"log_udp", &cfg->logUdp, 0, 1},
       {"log_level", &cfg->logLevel, 1, 4},
       {"log_port", &cfg->logPort, 1, 65535},
+      {"lan_wake", &cfg->lanWake, 0, 1},
+      {"ap_enabled", &cfg->apEnabled, 0, 1},
+      {"ap_delay_s", &cfg->apDelayS, 0, 3600},
   };
   for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); ++i) {
     if (store.get(nums[i].key, v, sizeof(v)) &&
@@ -475,7 +484,8 @@ bool configSave(KeyValueStore& store, const Config& cfg) {
       {"diag_every_h", cfg.diagEveryH}, {"batt_low_mv", cfg.battLowMv},
       {"batt_crit_mv", cfg.battCritMv}, {"update_check_h", cfg.updateCheckH},
       {"log_udp", cfg.logUdp},          {"log_level", cfg.logLevel},
-      {"log_port", cfg.logPort}};
+      {"log_port", cfg.logPort},        {"lan_wake", cfg.lanWake},
+      {"ap_enabled", cfg.apEnabled},    {"ap_delay_s", cfg.apDelayS}};
   for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); ++i) {
     snprintf(num, sizeof(num), "%lu",
              static_cast<unsigned long>(nums[i].value));
@@ -525,6 +535,9 @@ void configWriteJson(JsonWriter& w, const Config& cfg) {
       .kvu("log_level", cfg.logLevel)
       .kv("log_host", cfg.logHost)
       .kvu("log_port", cfg.logPort)
+      .kvb("lan_wake", cfg.lanWake != 0)
+      .kvb("ap_enabled", cfg.apEnabled != 0)
+      .kvu("ap_delay_s", cfg.apDelayS)
       .endObject();
 }
 

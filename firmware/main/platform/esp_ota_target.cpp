@@ -4,6 +4,7 @@
 #include <cstdio>
 
 #include "esp_log.h"
+#include "sdkconfig.h"
 
 static const char* kTag = "ota";
 
@@ -49,10 +50,16 @@ bool EspOtaTarget::finish(char* err, size_t cap) {
   esp_err_t e = esp_ota_end(handle_);  // validates the whole image
   handle_ = 0;
   if (e != ESP_OK) {
+#if CONFIG_SECURE_SIGNED_ON_UPDATE
+    // Signed profile: esp_ota_end() also checks the RSA signature.
+    static const char kInvalid[] =
+        "image rejected: not signed with the project key, or corrupt";
+#else
+    static const char kInvalid[] =
+        "image verification failed (corrupt or truncated)";
+#endif
     snprintf(err, cap, "%s",
-             e == ESP_ERR_OTA_VALIDATE_FAILED
-                 ? "image verification failed (corrupt or truncated)"
-                 : esp_err_to_name(e));
+             e == ESP_ERR_OTA_VALIDATE_FAILED ? kInvalid : esp_err_to_name(e));
     return false;
   }
   e = esp_ota_set_boot_partition(part_);

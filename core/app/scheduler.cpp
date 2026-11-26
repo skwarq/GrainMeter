@@ -52,8 +52,11 @@ Plan schedulePlan(const RetainedState& st, const Config& cfg, uint32_t nowMonoS,
   const bool enough = st.count >= needed;
   const bool spaced = !st.hasUploadAttempt ||
                       elapsed(nowMonoS, st.lastUploadAttemptMonoS, uploadS);
+  // An empty buffer (no probe / nothing mapped yet) still gets a window every
+  // upload interval: diagnostics (battery), update check and the LAN console
+  // hello depend on it.
   p.uploadDue = mode != PowerMode::Critical && cfg.uploadConfigured() &&
-                st.count > 0 && enough && spaced;
+                spaced && (st.count == 0 ? st.hasMeasured != 0 : enough);
 
   if (p.measureDue || !st.hasMeasured || nowMonoS < st.lastMeasureMonoS) {
     p.sleepS = measureS;  // after measuring now

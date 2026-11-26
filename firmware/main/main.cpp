@@ -9,10 +9,13 @@
 // captive DNS, portal at http://192.168.4.1/ (and on the local network while
 // the station link is up), OTA upload.
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <ctime>
 
 #include "device.h"
 #include "driver/rtc_io.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "esp_ota_ops.h"
@@ -23,8 +26,10 @@
 #include "freertos/task.h"
 #include "hw/board_io.h"
 #include "nvs_flash.h"
+#include "platform/power_stats.h"
 #include "sdkconfig.h"
 #include "service/dns_redirect.h"
+#include "service/lan_console.h"
 #include "service/usb_console.h"
 #include "service/web_portal.h"
 #include "util/log.h"
@@ -91,14 +96,25 @@ static void confirmImage(bool nvsOk, bool busOk, bool wifiOk) {
 
 [[noreturn]] static void deepSleep(uint32_t seconds) {
   ledSet(false);
-  ESP_LOGI(kTag, "deep sleep for %lu s", static_cast<unsigned long>(seconds));
+  const uint32_t awakeMs = powerStatsSleep(seconds);
+  ESP_LOGI(
+      kTag, "deep sleep for %lu s (awake %lu ms, boot %lu ms, Wi-Fi %lu ms)",
+      static_cast<unsigned long>(seconds), static_cast<unsigned long>(awakeMs),
+      static_cast<unsigned long>(powerStatsLastBootMs()),
+      static_cast<unsigned long>(powerStatsLastWifiMs()));
   esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(seconds) * 1000000ULL);
 #if CONFIG_GM_SERVICE_WAKE_GPIO >= 0
   // Service button wakes the chip without a reset: RTC samples survive.
   const gpio_num_t button =
       static_cast<gpio_num_t>(CONFIG_GM_SERVICE_WAKE_GPIO);
-  rtc_gpio_pullup_en(button);
+  // The pin must be an LP (RTC) IO for its pull-up to work in deep sleep
+  // (ESP-IDF ext_wakeup example). Without rtc_gpio_init() an unconnected
+  // GPIO2 floats while asleep and wakes the chip at once as if the button
+  // had been pressed (service mode, LED blinking, on battery).
+  rtc_gpio_init(button);
+  rtc_gpio_set_direction(button, RTC_GPIO_MODE_INPUT_ONLY);
   rtc_gpio_pulldown_dis(button);
+  rtc_gpio_pullup_en(button);
   esp_sleep_enable_ext1_wakeup_io(1ULL << CONFIG_GM_SERVICE_WAKE_GPIO,
                                   ESP_EXT1_WAKEUP_ANY_LOW);
 #endif
@@ -106,8 +122,51 @@ static void confirmImage(bool nvsOk, bool busOk, bool wifiOk) {
 }
 
 [[noreturn]] static void restartNow() {
+  lanServerClose();  // no new console client in the last moments
+  if (lanSessionActive()) {
+    // OTA or "restart" from the LAN console: announce again after the boot
+    // so the PC script reconnects by itself.
+    lanSessionEnd("restart");
+    lanMarkResume();
+  }
   vTaskDelay(pdMS_TO_TICKS(800));  // let the HTTP reply leave
   esp_restart();
+}
+
+static LanAnnounce lanAnnounce() {
+  Device& d = device();
+  static char name[sizeof(d.sys.deviceName)];
+  d.sys.copyDeviceName(name, sizeof(name));  // no torn name in the hello
+  LanAnnounce a;
+  a.ssid = d.sys.apSsid;
+  a.name = name;
+  a.ip = d.wifi.ipText();
+  a.fw = esp_app_get_description()->version;
+  return a;
+}
+
+// Radio outside the scheduled windows (after RST, resume) only with enough
+// battery: a weak cell must not end in a Wi-Fi brownout reset loop.
+static bool batteryAllowsRadio() {
+  Device& d = device();
+  const int mv = d.sys.batteryMv();
+  DeviceLock lock;
+  const uint32_t low = d.app->config().battLowMv;
+  return mv < 0 || low == 0 || static_cast<uint32_t>(mv) >= low ||
+         usbConnected();
+}
+
+// End of an upload window (Wi-Fi still up): offer the LAN console for a
+// moment. Runs inside the upload, i.e. with the device lock held.
+static void lanWakeHook() {
+  Device& d = device();
+  if (!d.sys.lanWake || d.sys.serviceMode) {
+    return;
+  }
+  if (lanOffer(lanAnnounce(), 500)) {
+    ESP_LOGI(kTag, "LAN console connected: staying awake");
+    d.wifi.setKeepStation(true);
+  }
 }
 
 static void ensureServicePassword() {
@@ -204,17 +263,35 @@ static void runWifiJoin() {
   }
 }
 
-static void runServiceMode() {
+// withAp=false: LAN console session only (no SoftAP); ends with the session.
+static void runServiceMode(bool withAp) {
   Device& d = device();
   d.sys.serviceMode = true;
   d.sys.exitService = false;
   d.sys.enterService = false;
-  bool apUp = startServiceAp();
-  if (!apUp) {
-    ESP_LOGW(kTag,
-             "service password not set: SoftAP disabled. Use the USB console: "
-             "set svc_pass <8+ chars>");
+  bool apEnabled;
+  bool wifiSet;
+  uint32_t apDelayS;
+  {
+    DeviceLock lock;
+    apEnabled = d.app->config().apEnabled != 0;
+    apDelayS = d.app->config().apDelayS;
+    wifiSet = d.app->config().wifiSsid[0] != '\0';
   }
+  // Target Wi-Fi first: the SoftAP (captive portal) is the fallback when no
+  // station link comes up within ap_delay_s. ap_enabled=0: never.
+  const bool apWanted = withAp && apEnabled;
+  const int64_t apAtUs =
+      esp_timer_get_time() +
+      (wifiSet ? static_cast<int64_t>(apDelayS) * 1000000 : 0);
+  bool apUp = false;
+  if (withAp && !apEnabled) {
+    ESP_LOGW(kTag, "SoftAP disabled (ap_enabled=0): portal only over Wi-Fi");
+  } else if (apWanted && wifiSet && apDelayS > 0) {
+    ESP_LOGI(kTag, "service mode: Wi-Fi first, SoftAP after %lu s without it",
+             static_cast<unsigned long>(apDelayS));
+  }
+  bool apWarned = false;
   webPortalStart();  // also reachable over the station link
   ledBlink(1000);
 
@@ -225,18 +302,40 @@ static void runServiceMode() {
   const int64_t startUs = esp_timer_get_time();
   int64_t lastLanTryUs = -60 * 1000000LL;
   int64_t noClientS = 0;
-  while (!d.sys.exitService) {
-    if (!apUp) {
-      apUp = startServiceAp();
+  while (true) {
+    if (d.sys.exitService) {
+      if (withAp) break;
+      d.sys.exitService = false;  // LAN-only: the console session ends it
     }
-    // Computer on USB (bench): portal also on the local network, no timeout.
+    if (apWanted && !apUp && !d.wifi.connected() &&
+        esp_timer_get_time() >= apAtUs) {
+      apUp = startServiceAp();
+      if (!apUp && !apWarned) {
+        apWarned = true;
+        ESP_LOGW(kTag,
+                 "service password not set: SoftAP disabled. Use the USB "
+                 "console: set svc_pass <8+ chars>");
+      }
+    }
+    // Computer on USB (bench) or LAN console: portal also on the local
+    // network, no timeout.
     const bool bench = usbConnected();
-    if (bench && !d.wifi.connected() &&
+    const bool lanHold = lanSessionActive();
+    if (!withAp && !lanHold) {
+      break;  // LAN console closed: the main loop decides what comes next
+    }
+    // Station retries also while the SoftAP is not up yet; once it serves
+    // clients, retries (channel scans) would disturb them, except on the
+    // bench.
+    if ((bench || !apUp) && !d.wifi.connected() &&
         esp_timer_get_time() - lastLanTryUs >= 60 * 1000000LL) {
       lastLanTryUs = esp_timer_get_time();
       connectLan();
     }
     runWifiJoin();
+    if (d.wifi.connected()) {
+      lanPoll(lanAnnounce(), 5000);  // script can (re)connect any time
+    }
     {
       DeviceLock lock;
       // Uploads only over a kept station link; otherwise the radio stays
@@ -260,7 +359,7 @@ static void runServiceMode() {
     d.sys.serviceIdleS = idle;
     // Never leave (and never sleep) while an update is being written.
     const bool windowOver = esp_timer_get_time() - startUs >= minOpenUs;
-    if (!otaBusy && !bench && windowOver &&
+    if (!otaBusy && !bench && !lanHold && windowOver &&
         idle >= CONFIG_GM_SERVICE_TIMEOUT_S) {
       ESP_LOGI(kTag, "service mode idle for %lu s",
                static_cast<unsigned long>(idle));
@@ -268,6 +367,8 @@ static void runServiceMode() {
     }
     vTaskDelay(pdMS_TO_TICKS(1000));
   }
+  lanSessionEnd("service mode ended");
+  lanServerClose();
   webPortalStop();
   dnsRedirectStop();
   d.wifi.stopAp();
@@ -279,6 +380,9 @@ static void runServiceMode() {
 }
 
 extern "C" void app_main(void) {
+  // Local time in log timestamps (HH:MM:SS.sss); epochs stay UTC.
+  setenv("TZ", CONFIG_GM_TIMEZONE, 1);
+  tzset();
   gm::setLogSink(logSink);
   Device& d = device();
   d.lock = xSemaphoreCreateMutex();
@@ -288,6 +392,7 @@ extern "C" void app_main(void) {
   const bool busOk = d.bus.init() == ESP_OK;
   const bool wifiOk = d.wifi.init() == ESP_OK;
   d.sys.init(&d.wifi);
+  powerStatsBoot(!d.sys.coldBoot);
   confirmImage(nvsOk, busOk, wifiOk);
   if (busOk && !d.bus.lineIdleHigh()) {
     ESP_LOGW(kTag,
@@ -338,6 +443,44 @@ extern "C" void app_main(void) {
     }
   }
 
+  // After RST / power-on (not a deep sleep wake): join Wi-Fi at once, set
+  // the clock and offer the LAN console for 3 s, so a waiting
+  // tools/lan_console.py gets a session right after pressing RST.
+  bool wifiSet;
+  bool lanWake;
+  {
+    DeviceLock lock;
+    wifiSet = d.app->config().wifiSsid[0] != '\0';
+    lanWake = d.app->config().lanWake != 0;
+  }
+  const bool resume = lanTakeResume();
+  if (d.sys.coldBoot && !resume && !service && wifiSet && lanWake &&
+      batteryAllowsRadio()) {
+    connectLan();
+    if (d.wifi.connected()) {
+      d.wifi.syncTime(gm::kTimeSyncTimeoutMs);
+      if (lanOffer(lanAnnounce(), 3000)) {
+        ESP_LOGI(kTag, "LAN console connected after reset: staying awake");
+      }
+    }
+    if (!lanSessionActive()) {
+      d.wifi.setKeepStation(false);
+    }
+  }
+  d.wifi.setDropHook(lanWakeHook);
+
+  if (resume && batteryAllowsRadio()) {
+    // Restarted during a LAN console session: announce for up to 2 min.
+    ESP_LOGI(kTag, "resuming the LAN console");
+    connectLan();
+    for (int i = 0; i < 40 && d.wifi.connected() && !lanSessionActive(); ++i) {
+      lanOffer(lanAnnounce(), 3000);
+    }
+    if (!lanSessionActive()) {
+      d.wifi.setKeepStation(false);
+    }
+  }
+
   const int64_t bootUs = esp_timer_get_time();
   // Bench: a computer on USB starts service mode (portal also on the local
   // network). Leaving it with exit-service holds until the cable is removed.
@@ -347,12 +490,14 @@ extern "C" void app_main(void) {
     if (!usbHost) {
       benchDismissed = false;
     }
-    if (service || d.sys.enterService || serviceWakeButtonPressed() ||
-        (usbHost && !benchDismissed)) {
+    const bool wanted = service || d.sys.enterService ||
+                        serviceWakeButtonPressed() ||
+                        (usbHost && !benchDismissed);
+    if (wanted || lanSessionActive()) {
       if (usbHost && !service && !d.sys.enterService) {
         ESP_LOGI(kTag, "computer on USB: service mode (bench)");
       }
-      runServiceMode();
+      runServiceMode(wanted);
       service = false;
       benchDismissed = usbConnected();
     }
@@ -370,7 +515,7 @@ extern "C" void app_main(void) {
         usbConnected() &&
         (usbConsoleIdleSeconds() < 60 ||
          (d.sys.coldBoot && esp_timer_get_time() - bootUs < 10000000));
-    if (usbActive || d.sys.enterService) {
+    if (usbActive || d.sys.enterService || lanSessionActive()) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }

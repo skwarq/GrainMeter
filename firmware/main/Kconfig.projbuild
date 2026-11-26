@@ -80,6 +80,13 @@ menu "GrainMeter"
             in the portal still need the service password. Disable for a
             WPA2 SoftAP protected by the service password.
 
+    config GM_TIMEZONE
+        string "Time zone for log timestamps (POSIX TZ)"
+        default "CET-1CEST,M3.5.0,M10.5.0/3"
+        help
+            Log lines show the local wall-clock time HH:MM:SS.sss once the
+            clock is set (SNTP). Data sent to ThingSpeak stays in UTC.
+
     config GM_DEFAULT_UPDATE_URL
         string "Default remote update manifest URL (empty = off)"
         default ""

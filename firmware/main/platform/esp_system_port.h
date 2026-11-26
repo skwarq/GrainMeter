@@ -20,7 +20,7 @@ class EspSystemPort : public gm::SystemPort {
   bool platformAction(const char* action, const gm::Form& args, char* msg,
                       size_t cap) override;
   const char* rejectedFirmware() override { return rejected_; }
-  void applyLogging(const gm::Config& cfg) override;
+  void configApplied(const gm::Config& cfg) override;
 
   // Shared with the main loop.
   std::atomic<bool> restart{false};
@@ -32,6 +32,11 @@ class EspSystemPort : public gm::SystemPort {
   std::atomic<uint32_t> serviceMinutes{0};
   bool wokeByButton = false;
   char apSsid[33] = "";
+  // Cached from the configuration for the Wi-Fi drop hook (no lock there).
+  std::atomic<bool> lanWake{true};
+  char deviceName[32] = "";
+  // Copy of deviceName that is safe against a concurrent configApplied().
+  void copyDeviceName(char* out, size_t cap);
   bool coldBoot = true;
 
  private:

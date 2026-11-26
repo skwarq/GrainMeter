@@ -25,6 +25,10 @@ class WifiLink : public gm::Network {
   // Service mode on the bench: the station link stays up for the LAN portal,
   // so disconnect() after an upload keeps it. false drops it again.
   void setKeepStation(bool keep);
+  // Called by disconnect() while the station link is still up and not kept
+  // (end of an upload window): LAN console hello. It may call
+  // setKeepStation(true) to keep the link.
+  void setDropHook(void (*hook)()) { dropHook_ = hook; }
   bool connected() const { return connected_; }
   // "station": {ip, channel, bssid, rssi} for /api/diag.
   void writeJson(gm::JsonWriter& w);
@@ -49,6 +53,7 @@ class WifiLink : public gm::Network {
   bool apRunning_ = false;
   bool scanning_ = false;
   bool keepSta_ = false;
+  void (*dropHook_)() = nullptr;
   char staSsid_[33] = "";  // network of the current station link
   char ip_[16] = "";
   volatile bool connected_ = false;

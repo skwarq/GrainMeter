@@ -13,6 +13,7 @@ Ta sama logika aplikacji (C++11, bez wyjątków) działa na PC (symulator z
 wirtualną sondą) i na **DFRobot FireBeetle 2 ESP32-C6 (DFR1075)**.
 
 - [Struktura](#struktura)
+- [Narzędzia PC: konsola w sieci lokalnej](tools/README.md)
 - [PC: budowanie i uruchomienie](#pc-budowanie-i-uruchomienie)
 - [Symulacja awarii](#symulacja-awarii)
 - [Testy, formatowanie, Valgrind](#testy-formatowanie-valgrind)
@@ -319,6 +320,9 @@ automap                             # albo: map <ROM> <punkt 1..8> [wysokość c
 measure
 upload                              # test wysyłki od razu
 set log_udp 1                       # opcjonalnie: logi przez UDP (patrz niżej)
+set lan_wake 0                      # opcjonalnie: bez konsoli w sieci lokalnej
+set ap_delay_s 60                   # SoftAP po 60 s bez sieci Wi-Fi (0 = od razu)
+set ap_enabled 0                    # bez SoftAP i captive portalu
 status                              # stan (JSON), diag = pełna diagnostyka
 ```
 
@@ -399,7 +403,15 @@ Wejście:
    USB albo zdalne żądanie z manifestu (`service_id`, patrz niżej).
 4. **Komputer podłączony przez USB** (tryb „na biurku”, patrz niżej).
 
-Wtedy: SoftAP **`GrainMeter-XXXX`**, domyślnie **otwarty, bez hasła** (jak w
+Gdy sieć Wi-Fi jest skonfigurowana, urządzenie najpierw łączy się z nią
+(portal pod adresem w sieci lokalnej). SoftAP startuje dopiero wtedy, gdy
+przez `ap_delay_s` sekund (domyślnie 60, ustawiane w portalu: Konfiguracja →
+Serwis; 0 = od razu) połączenie się nie uda. Bez skonfigurowanej sieci SoftAP
+startuje od razu. `set ap_enabled 0` w konsoli USB lub LAN wyłącza SoftAP i
+captive portal całkowicie (celowo bez przełącznika w portalu); zostaje
+wtedy portal przez sieć Wi-Fi, konsola USB i konsola w sieci lokalnej.
+
+SoftAP: **`GrainMeter-XXXX`**, domyślnie **otwarty, bez hasła** (jak w
 WIFI_RS; telefon łączy się od razu i pokazuje okno logowania). Kanał 1,
 maks. 4 klientów. Captive portal:
 
@@ -460,6 +472,49 @@ API: `POST /api/wifi/scan`, `POST /api/wifi/join` (pola `wifi_ssid`,
 puste hasło = zapisane), wynik `GET /api/wifi/join`
 (`idle|pending|running|ok|failed`). ESP32-C6 obsługuje tylko 2,4 GHz.
 
+### Konsola w sieci lokalnej (wybudzanie z LAN)
+
+Do pracy z urządzeniem na baterii bez kabla: skrypt na komputerze w tej samej
+sieci czeka, aż urządzenie się zgłosi, łączy się i dopóki połączenie trwa,
+urządzenie nie zasypia (portal w sieci lokalnej, wgrywanie firmware, testy
+sondy).
+
+```bash
+make lan-console                              # interaktywnie, hasło z config/device.conf
+make lan-console LAN_ARGS="--device GrainMeter-0079 --no-logs"
+python3 tools/lan_console.py --cmd status     # jedna komenda i koniec
+make lan-list                                 # urządzenia zgłaszające się w sieci
+```
+
+Przebieg (protokół v1, szczegóły w [tools/README.md](tools/README.md)):
+
+1. Po RST lub włączeniu zasilania (przy skonfigurowanej sieci i baterii
+   powyżej `batt_low_mv`) urządzenie od razu łączy się z Wi-Fi, ustawia
+   czas i przez **3 s** czeka na skrypt – wystarczy uruchomić
+   `make lan-console` i nacisnąć RST.
+   Na końcu każdego okna wysyłki (Wi-Fi i tak włączone) urządzenie rozsyła
+   UDP `GM-HELLO` na port 5515 i przez **0,5 s** czeka na połączenie TCP na
+   porcie 5516. W trybie serwisowym ogłasza się co 5 s i przyjmuje połączenie
+   cały czas.
+2. Skrypt łączy się od razu i loguje hasłem serwisowym (`auth`; 3 błędy =
+   rozłączenie, wspólna blokada z portalem). Urządzenie nie zasypia tylko dla
+   zalogowanego klienta; połączenie bez logowania jest zamykane po 10 s.
+3. Sesja = konsola USB przez Wi-Fi (te same komendy) + logi na żywo
+   (`logs off` wyłącza). Urządzenie pracuje jak w trybie na biurku, bez
+   SoftAP.
+4. Skrypt co 10 s wysyła `#ping`. Urządzenie kończy sesję po 60 s ciszy, po
+   4 h albo po `exit` i wraca do cyklu z deep sleep.
+5. Restart w trakcie sesji (komenda `restart`, aktualizacja firmware):
+   urządzenie po starcie przez 2 min ogłasza się co 3 s, a skrypt sam łączy
+   się ponownie.
+
+Czeka się najwyżej do najbliższego okna wysyłki (`upload_s`, domyślnie
+1 h). Okno otwiera się co `upload_s` także wtedy, gdy nie ma czego wysłać
+(brak sondy lub zmapowanych czujników): idzie wtedy diagnostyka, sprawdzenie
+aktualizacji i hello. Koszt: 0,5 s radia na okno, ok. 0,3 mAh na dobę. Hasło idzie w sieci
+lokalnej otwartym tekstem (jak portal przez HTTP). Wyłączenie:
+`set lan_wake 0`. Testy skryptu z symulatorem urządzenia: `make tools-test`.
+
 ### Logi przez UDP
 
 Jak w WIFI_RS: Konfiguracja → **Logi przez UDP** (albo w konsoli
@@ -468,7 +523,9 @@ Każda linia logu trafia dalej na konsolę USB, a dodatkowo jako datagram UDP
 na `log_host:log_port` (domyślnie port 5514; puste `log_host` = rozgłoszenie
 255.255.255.255 w sieci lokalnej). Linie mają prefiks z nazwą SoftAP, np.
 `GrainMeter-0079 I (24880) app: …`, więc da się rozróżnić kilka urządzeń.
-Poziom: 1 błędy, 2 ostrzeżenia, 3 informacje, 4 debug (dotyczy też konsoli
+Znacznik czasu to lokalny czas `HH:MM:SS.sss` (strefa z Kconfig
+`GM_TIMEZONE`, domyślnie Polska; przed pierwszą synchronizacją SNTP liczony
+od 00:00). Poziom: 1 błędy, 2 ostrzeżenia, 3 informacje, 4 debug (dotyczy też konsoli
 USB, gdy logi UDP są włączone). Odbiór:
 
 ```bash
@@ -532,6 +589,7 @@ godzinę → rzędu 5 mAh/dobę. Okno Wi-Fi jest najdroższe, dlatego:
 | Tryb oszczędny | bateria < `batt_low_mv` (3450 mV): wysyłka 4× rzadziej, brak zdalnej aktualizacji |
 | Tryb krytyczny | bateria < `batt_crit_mv` (3300 mV): bez Wi-Fi, pomiar 2× rzadziej, dane czekają w buforze |
 | Przycisk EXT1 | wejście w serwis bez resetu i bez utraty bufora |
+| Konsola LAN | tylko 0,5 s nasłuchu na końcu okna wysyłki (`lan_wake 0` wyłącza) |
 
 Tryb zasilania widać w portalu (Przegląd, Diagnostyka) i w kanale
 diagnostycznym (`status`: `power=...`). Próg 0 wyłącza dany tryb.

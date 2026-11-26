@@ -72,3 +72,16 @@ TEST_F(SchedulerTest, RtcRestartTreatedAsOverdue) {
   measured(5000);
   EXPECT_TRUE(gm::schedulePlan(*st, cfg, 10).measureDue);
 }
+
+TEST_F(SchedulerTest, HeartbeatWindowWithoutSamples) {
+  // Measurements store nothing (no sensors mapped): count stays 0.
+  st->hasMeasured = 1;
+  st->lastMeasureMonoS = 0;
+  EXPECT_TRUE(gm::schedulePlan(*st, cfg, 0).uploadDue);  // first window
+  st->hasUploadAttempt = 1;
+  st->lastUploadAttemptMonoS = 0;
+  EXPECT_FALSE(gm::schedulePlan(*st, cfg, 1800).uploadDue);
+  EXPECT_TRUE(gm::schedulePlan(*st, cfg, 3600).uploadDue);
+  cfg.channelId = 0;  // still nothing without reporting configured
+  EXPECT_FALSE(gm::schedulePlan(*st, cfg, 3600).uploadDue);
+}

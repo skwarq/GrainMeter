@@ -32,3 +32,7 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
 # Task list (name, free stack, priority) in /api/diag, like WIFI_RS.
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+
+# Log lines with wall-clock time HH:MM:SS.sss (local time, GM_TIMEZONE)
+# instead of milliseconds since boot.
+CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM=y
