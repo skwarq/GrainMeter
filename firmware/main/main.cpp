@@ -500,6 +500,7 @@ extern "C" void app_main(void) {
   // tools/lan_console.py gets a session right after pressing RST.
   bool wifiSet;
   bool lanWake;
+  bool keepLinkForFirstWindow = false;
   {
     DeviceLock lock;
     wifiSet = d.app->config().wifiSsid[0] != '\0';
@@ -510,12 +511,14 @@ extern "C" void app_main(void) {
       wifiSet && lanWake && batteryAllowsRadio()) {
     connectLan();
     if (d.wifi.connected()) {
-      d.wifi.syncTime(gm::kTimeSyncTimeoutMs);
       if (lanOffer(lanAnnounce(), 3000) && lanWaitLogin()) {
         ESP_LOGI(kTag, "LAN console connected after reset: staying awake");
       }
-    }
-    if (!holdActive()) {
+      // Keep this link for the first upload window (no second connect; the
+      // window also sets the clock): a reset with a queued TalkBack REMOTE
+      // gets its remote session several seconds sooner.
+      keepLinkForFirstWindow = true;
+    } else if (!holdActive()) {
       d.wifi.setKeepStation(false);
     }
   }
@@ -559,6 +562,10 @@ extern "C" void app_main(void) {
       DeviceLock lock;
       sleepS = d.app->runDue(true);
       remoteAfterUpload();
+    }
+    if (keepLinkForFirstWindow) {
+      keepLinkForFirstWindow = false;
+      if (!holdActive()) d.wifi.setKeepStation(false);
     }
     remotePoll();
     if (d.sys.restart) {

@@ -411,7 +411,10 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
                                 : "time sync failed (no samples)");
     return L;
   }
+  // TalkBack first: a queued REMOTE should start the session as early as
+  // possible (the session itself starts after this window).
   // TLS certificate validity checks need the synchronised wall clock.
+  pollTalkback();
   sendNotifications();
   const uint32_t nowEpoch = p_.clock->epoch();
   const uint32_t nowMono = p_.clock->monoS();
@@ -473,8 +476,10 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
   } else {
     L.diagResult = DiagNotDue;
   }
-  pollTalkback();
-  if (cfg_.remoteUpdateEnabled() && updateCheckDue(nowMono)) {
+  // With a remote session waiting, the manifest check (a second TLS
+  // handshake, ~6 s) waits for the next window: the user is waiting.
+  if (cfg_.remoteUpdateEnabled() && updateCheckDue(nowMono) &&
+      remotePendingMin() == 0) {
     // Scheduled checks only inform: installing is always the user's click
     // (portal: Update -> Install). A newly announced version is reported
     // once through ntfy/Telegram when configured.

@@ -4,13 +4,21 @@ Co wnosi każda wersja oprogramowania GrainMeter. Urządzenie samo tylko
 informuje o nowej wersji; instalacja jest zawsze decyzją użytkownika
 (portal → Aktualizacja → Zainstaluj).
 
-## Niewydane
+## 0.4.1
+
+2026-11-26
 
 - Dashboard i strona zdalna mają wspólne ustawienia: zdalny dostęp (broker,
   ID urządzenia, TalkBack) wpisujesz raz – w Ustawieniach dashboardu albo w
   `remote.html`; hasła zapisują się tylko na życzenie.
 - `remote.html`: przy uśpionej płytce link „Dane z ThingSpeak”.
 - Link z `scripts/remote_link.py` wypełnia też ID kanałów w dashboardzie.
+- Szybsze wybudzenie zdalne: po resecie jedno połączenie Wi-Fi zamiast dwóch,
+  TalkBack sprawdzany od razu po synchronizacji zegara, a sprawdzanie
+  aktualizacji odkładane, gdy czeka sesja – „Wybudź” + reset: ~17 s do
+  połączenia zamiast ~30 s (zwykłe wybudzenie w oknie wysyłki: ok. 6 s szybciej).
+- EMQX: reguły uprawnień przy loginach (Username), nie przy Client ID;
+  opis zarządzania nimi przez API. Linki do dashboardu na górze README.
 
 ## 0.4.0
 

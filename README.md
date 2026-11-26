@@ -1,5 +1,9 @@
 # GrainMeter
 
+**[Dashboard – dane z ThingSpeak](https://skwarq.github.io/GrainMeter/)** ·
+**[Połączenie zdalne z płytką](https://skwarq.github.io/GrainMeter/remote.html)** ·
+[Zmiany w wersjach](CHANGELOG.md)
+
 Monitor temperatury ziarna w silosie. Zastępuje ręczny czytnik BIN STW-100,
 czyta jego oryginalną sondę wielopunktową (1-Wire, 8 punktów), pracuje z
 akumulatora i panelu słonecznego, co 15 min mierzy, raz na godzinę wysyła
@@ -697,8 +701,8 @@ podpis kluczem publicznym z repozytorium i tworzy GitHub Release z plikami:
 
 Firmware w profilu podpisanym ma domyślnie
 `update_url = https://github.com/skwarq/GrainMeter/releases/latest/download/manifest.json`,
-więc urządzenia same instalują najnowsze wydanie (domyślnie sprawdzają raz na
-dobę). Klient HTTPS urządzenia podąża za przekierowaniami GitHuba (maks. 5,
+więc urządzenia raz na dobę sprawdzają najnowsze wydanie i **informują** o nim
+(portal, opcjonalnie ntfy/Telegram); instalacja po kliknięciu „Zainstaluj”. Klient HTTPS urządzenia podąża za przekierowaniami GitHuba (maks. 5,
 tylko `https://`, każdy host z weryfikacją certyfikatu).
 
 ### Jednorazowa konfiguracja

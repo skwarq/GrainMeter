@@ -333,3 +333,22 @@ TEST_F(RemoteUpdateTest, FollowsReleaseRedirects) {
   EXPECT_EQ(code(), gm::RemoteUpdateResult::Updated) << result();
   EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_1");
 }
+
+TEST_F(RemoteUpdateTest, QueuedRemoteSessionDefersTheManifestCheck) {
+  // A waiting user (TalkBack REMOTE) must not wait for a manifest download:
+  // the check moves to the next window, the session request is kept.
+  configure("talkback_id=7&talkback_key=remote-secret&remote_budget_min=30");
+  const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
+  publish("9.9.9", img, hexSha(img));
+  sim("action=talkback&cmd=REMOTE+5+0");
+  t.runFor(3600);  // first upload window: TalkBack has a command
+  EXPECT_STREQ(t.dev->app().state().updateLatest, "");  // not checked
+  uint32_t minutes = 0;
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    EXPECT_TRUE(t.dev->app().takeRemoteRequest(&minutes));
+  }
+  EXPECT_EQ(minutes, 5u);
+  t.runFor(3600);  // next window, nothing pending: the check runs
+  EXPECT_STREQ(t.dev->app().state().updateLatest, "9.9.9");
+}

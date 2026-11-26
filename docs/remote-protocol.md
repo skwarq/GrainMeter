@@ -58,7 +58,13 @@ last three MAC bytes in hex). `mid` is `[A-Za-z0-9_-]{1,16}`.
 | `<id>-web` | `gm/<id>/req/#` | `gm/<id>/res/#`, `gm/<id>/status`, `gm/<id>/log` |
 
 Default deny; on EMQX put the deny at the end of each login's rules
-(a global All Users deny can override per-login grants).
+(a global All Users deny can override per-login grants). Rules go under
+**Username** (Access Control → Authorization), not **Client ID**: the
+client IDs are `gm-<id>-dev` and `gm-<id>-web-<random>`, so per-client-ID
+rules never match. The EMQX Cloud REST API (`/api/v5`, App ID + Secret)
+manages them: `authorization/sources/built_in_database/rules/users`; the
+blacklist/whitelist mode is console-only (the per-login deny makes it
+irrelevant for these logins).
 
 ## Keys and session
 
