@@ -13,6 +13,7 @@
 #include <cstring>
 #include <ctime>
 
+#include "aes/esp_aes.h"
 #include "device.h"
 #include "driver/rtc_io.h"
 #include "esp_app_desc.h"
@@ -25,6 +26,10 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "hw/board_io.h"
+#include "lwip/sockets.h"
+// The bignum API is private in mbedTLS 4; ESP-IDF's own port uses it so.
+#define MBEDTLS_DECLARE_PRIVATE_IDENTIFIERS
+#include "mbedtls/private/bignum.h"
 #include "nvs_flash.h"
 #include "platform/power_stats.h"
 #include "sdkconfig.h"
@@ -423,6 +428,43 @@ static void runServiceMode(bool withAp) {
   ESP_LOGI(kTag, "service mode finished, back to the measurement cycle");
 }
 
+// Several IDF objects are created on first use and never freed: the MPI
+// (RSA/bignum) interrupt and the AES DMA interrupt of the hardware crypto.
+// Created by the first TLS handshake during network traffic, they land in
+// the middle of the largest free heap block and split it (WIFI_RS_ESP32S2:
+// the largest block was cut roughly in half, below what a TLS record can
+// need). Creating them before Wi-Fi keeps them with the boot-time data.
+// The newlib time/TZ locks are created even earlier by tzset() above.
+static void warmUpLazyAllocations() {
+  mbedtls_mpi x, y, m, z;
+  mbedtls_mpi_init(&x);
+  mbedtls_mpi_init(&y);
+  mbedtls_mpi_init(&m);
+  mbedtls_mpi_init(&z);
+  if (mbedtls_mpi_lset(&x, 2) == 0 && mbedtls_mpi_lset(&y, 3) == 0 &&
+      mbedtls_mpi_lset(&m, 241) == 0) {
+    (void)mbedtls_mpi_exp_mod(&z, &x, &y, &m, nullptr);
+  }
+  mbedtls_mpi_free(&x);
+  mbedtls_mpi_free(&y);
+  mbedtls_mpi_free(&m);
+  mbedtls_mpi_free(&z);
+  // AES uses its interrupt only for DMA operations longer than 2000 bytes.
+  const size_t len = 2048;
+  uint8_t* buf = static_cast<uint8_t*>(calloc(1, len));
+  if (buf != nullptr) {
+    static const uint8_t key[16] = {};
+    uint8_t iv[16] = {};
+    esp_aes_context aes;
+    esp_aes_init(&aes);
+    if (esp_aes_setkey(&aes, key, 128) == 0) {
+      (void)esp_aes_crypt_cbc(&aes, ESP_AES_ENCRYPT, len, iv, buf, buf);
+    }
+    esp_aes_free(&aes);
+    free(buf);
+  }
+}
+
 extern "C" void app_main(void) {
   // Local time in log timestamps (HH:MM:SS.sss); epochs stay UTC.
   setenv("TZ", CONFIG_GM_TIMEZONE, 1);
@@ -435,7 +477,14 @@ extern "C" void app_main(void) {
 
   const bool nvsOk = initNvs() == ESP_OK && d.store.open() == ESP_OK;
   const bool busOk = d.bus.init() == ESP_OK;
+  warmUpLazyAllocations();
   const bool wifiOk = d.wifi.init() == ESP_OK;
+  if (wifiOk) {
+    // lwIP creates a per-task semaphore on a task's first socket call; for
+    // the main task (all HTTPS of the upload windows) do it now, at boot.
+    const int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock >= 0) close(sock);
+  }
   d.sys.init(&d.wifi);
   powerStatsBoot(!d.sys.coldBoot);
   confirmImage(nvsOk, busOk, wifiOk);
