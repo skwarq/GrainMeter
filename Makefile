@@ -18,6 +18,9 @@
 #                   [AUTOMAP=1] map sensors, [TEST_UPLOAD=1] measure + upload once
 #   make provision-sim   same settings for the PC simulator
 #   make setup-board     flash-release + provision in one go
+#   make lan-console     LAN console on the host [LAN_ARGS="--device SSID"]
+#   make lan-list        list devices announced on the LAN
+#   make tools-test      Python LAN console tests on the host
 
 USE_DOCKER ?= 1
 DEV_IMAGE  ?= grainmeter-dev:$(shell sha1sum docker/dev.Dockerfile | cut -c1-12)
@@ -157,3 +160,14 @@ ci: check
 
 clean:
 	rm -rf build firmware/build firmware/dist
+
+.PHONY: lan-console lan-list tools-test
+
+lan-console:
+	python3 tools/lan_console.py $(LAN_ARGS)
+
+lan-list:
+	python3 tools/lan_console.py --list
+
+tools-test:
+	python3 -m unittest discover -s tools -p 'test_*.py' -v
