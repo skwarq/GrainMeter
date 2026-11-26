@@ -9,6 +9,12 @@ w sieci lokalnej, gdy płytka jest podłączona do komputera), wybór sieci Wi-F
 z listy, logi przez UDP i aktualizacja firmware z przeglądarki (OTA z
 rollbackiem).
 
+W Diagnostyce portalu dostępny jest podgląd „Logi” na żywo przez SoftAP,
+LAN i podpisany tunel MQTT, bez włączania wysyłki UDP/MQTT. Panel odpytywany
+co około 2 s ma filtr E/W/I/D, pauzę, licznik utraconych linii i pobieranie
+`.txt`. Bufor RAM (~4,3 KiB) powstaje przy pierwszym odczycie i znika po
+5 min bez odczytów; lokalnie logi są dostępne bez hasła, jak `/api/diag`.
+
 Ta sama logika aplikacji (C++11, bez wyjątków) działa na PC (symulator z
 wirtualną sondą) i na **DFRobot FireBeetle 2 ESP32-C6 (DFR1075)**.
 
@@ -527,10 +533,26 @@ aktualizacji i hello. Koszt: 0,5 s radia na okno, ok. 0,3 mAh na dobę. Hasło i
 lokalnej otwartym tekstem (jak portal przez HTTP). Wyłączenie:
 `set lan_wake 0`. Testy skryptu z symulatorem urządzenia: `make tools-test`.
 
-### Logi przez UDP
+### Logi (podgląd w portalu / UDP / MQTT)
 
-Jak w WIFI_RS: Konfiguracja → **Logi przez UDP** (albo w konsoli
-`set log_udp 1`, `set log_level 1..4`, `set log_host`, `set log_port`).
+Konfiguracja → **Logi** albo Diagnostyka → **Logi**: „Wysyłanie logów” —
+tylko podgląd w portalu (domyślnie, `log_udp=0`), UDP albo MQTT — i poziom
+1..4 (dotyczy też podglądu w portalu). W konsoli: `set log_udp 0|1`,
+`set log_dest udp` / `set log_dest mqtt`.
+MQTT działa tylko podczas sesji zdalnej, nie wybudza płytki ani nie przedłuża
+sesji. Temat `gm/<id>/log`: zwykły tekst bez podpisu, QoS 0, bez retain;
+wymaga ACL Publish dla `<id>-dev` i Subscribe dla `<id>-web`.
+Podgląd: Diagnostyka → **Logi** (500 linii, filtr E/W/I/D, pauza,
+czyszczenie i pobieranie .txt) — w sesji zdalnej z `log_dest=mqtt` pokazuje
+logi przychodzące przez MQTT; brak ACL logów nie blokuje tunelu.
+Odbiór na PC: `python3 tools/mqtt_log.py` (dane z `config/device.conf`,
+opcjonalnie `--status`; skrypt podaje wymaganą bibliotekę).
+Ograniczony bufor około 4 KiB zachowuje najnowsze linie przed połączeniem,
+wysyła je w paczkach do 1 KiB i zgłasza `... N lines dropped`.
+Liczniki MQTT oraz cel: `esp.logs` w `/api/diag`. Podgląd LAN i USB
+pozostaje niezależny od wyboru transportu.
+
+Dla UDP (jak w WIFI_RS): `set log_host`, `set log_port`.
 Każda linia logu trafia dalej na konsolę USB, a dodatkowo jako datagram UDP
 na `log_host:log_port` (domyślnie port 5514; puste `log_host` = rozgłoszenie
 255.255.255.255 w sieci lokalnej). Linie mają prefiks z nazwą SoftAP, np.
@@ -538,7 +560,7 @@ na `log_host:log_port` (domyślnie port 5514; puste `log_host` = rozgłoszenie
 Znacznik czasu to lokalny czas `HH:MM:SS.sss` (strefa z Kconfig
 `GM_TIMEZONE`, domyślnie Polska; przed pierwszą synchronizacją SNTP liczony
 od 00:00). Poziom: 1 błędy, 2 ostrzeżenia, 3 informacje, 4 debug (dotyczy też konsoli
-USB, gdy logi UDP są włączone). Odbiór:
+USB, gdy logi zdalne są włączone). Odbiór UDP:
 
 ```bash
 nc -ulk 5514
@@ -741,7 +763,7 @@ ciemny, układ pod telefon. Brak zewnętrznych zasobów (działa na AP bez Inter
 
 Wynik jest zapisany w `portal/` i używany bez Node przez oba buildy:
 PC serwuje `portal/index.html` (~172 KiB), firmware wbudowuje
-`portal/index.html.gz` (~55 KiB, limit 60 KiB sprawdzany przy budowaniu).
+`portal/index.html.gz` (~60 KiB, limit 72 KiB sprawdzany przy budowaniu).
 
 ```bash
 make frontend      # npm ci + verify (format, lint, testy, build) w node:26-alpine
@@ -922,3 +944,77 @@ ale nie dodatkowych pomiarów ani transmisji radiowych. Dashboard używa już
 pobranych danych diagnostycznych z wybranego zakresu i domyślnego progu
 3500 mV (kanał nie zawiera ustawionego progu); zakres krótszy niż doba wyświetla
 „za mało danych w zakresie”.
+
+## Zdalny dostęp przez internet
+
+Urządzenie łączy się z brokerem MQTT przez szyfrowane połączenie wychodzące;
+nie trzeba otwierać portów routera. Do korzystania potrzebne są działające
+Wi-Fi przy urządzeniu, hasło serwisowe `svc_pass` oraz broker MQTT.
+
+1. W EMQX Cloud utwórz deployment **Serverless** i zapisz jego adres.
+   Utwórz dwa osobne loginy z hasłami: dla płytki i dla przeglądarki.
+   W autoryzacji ustaw domyślne odrzucanie dostępu i poniższe reguły
+   (zastąp `<id>` identyfikatorem swojego urządzenia):
+
+   | Login | Publikowanie | Subskrypcja |
+   | --- | --- | --- |
+   | płytka | `gm/<id>/res/#`, `gm/<id>/status` | `gm/<id>/req/#` |
+   | przeglądarka | `gm/<id>/req/#` | `gm/<id>/res/#`, `gm/<id>/status` |
+
+   Pozostały dostęp zablokuj. Dla kolejnych osób można utworzyć oddzielne
+   loginy przeglądarki z tymi samymi uprawnieniami.
+2. W konfiguracji płytki ustaw `remote_url=mqtts://<host>:8883`,
+   `remote_user` i `remote_pass` logowania płytki. Ustaw `remote_id`
+   (1–24 znaków `a-z`, cyfr lub `-`) albo pozostaw puste: wtedy ID to
+   `gm-` i sześć małych cyfr szesnastkowych z końca MAC stacji Wi-Fi.
+   `remote_budget_min` określa dobowy budżet (domyślnie 60 minut,
+   0 wyłącza zdalne sesje). Pusty `remote_url` wyłącza transport MQTT.
+3. W ThingSpeak utwórz TalkBack i przepisz `talkback_id` oraz
+   `talkback_key` do konfiguracji płytki. TalkBack jest potrzebny do
+   wybudzania sesji na baterii; w trybie serwisowym (przycisk lub komputer
+   na USB) płytka uruchamia sesję automatycznie po połączeniu Wi-Fi.
+4. Otwórz https://skwarq.github.io/GrainMeter/remote.html (link
+   „Połączenie zdalne” w dashboardzie) albo link z wypełnionymi polami:
+   `python3 scripts/remote_link.py` (bierze `web_*`, `remote_id`, `svc_pass`
+   i TalkBack z `config/device.conf`; dane są we fragmencie `#`, nie idą do
+   serwera; lokalny build: `--base http://127.0.0.1:8765/remote.html`). Podaj
+   `wss://<host>:8084/mqtt`, login i hasło **przeglądarki**, ID urządzenia
+   oraz jego hasło serwisowe. Opcjonalnie podaj ID i klucz TalkBack, aby
+   użyć „Wybudź” na 1–60 minut. Dane pozostają w pamięci karty; opcja
+   „zapamiętaj” zapisuje także hasła w localStorage tej przeglądarki.
+
+„Wybudź” kolejkuje komendę, którą płytka odbierze w następnym oknie
+wysyłki lub heartbeat. Opóźnienie może wynieść cały `upload_s`, a w trybie
+Economy dłużej. Ważność komendy wysyłanej przez portal wynosi dwie godziny.
+Tryb Critical blokuje rozpoczęcie i kończy trwającą sesję. Brak ustawionego
+hasła serwisowego również blokuje połączenie.
+
+Sesja kończy się po zadanym czasie, po 10 minutach bez poprawnego żądania,
+po wyczerpaniu budżetu albo po „Wyjdź z serwisu”. Czas na baterii jest
+rozliczany co minutę i przy zakończeniu/restarcie; czas przy komputerze
+na USB nie zużywa budżetu. Sesja serwisowa ma limit 60 minut i ten sam
+limit bezczynności. Konsola USB i LAN udostępnia `remote` (stan),
+`remote start <min>` oraz `remote stop`.
+
+Aktywna sesja utrzymuje Wi-Fi bez oszczędzania energii i zużywa znacznie
+więcej prądu niż normalny sen. Konsola LAN i sesja zdalna mogą działać
+jednocześnie: zakończenie jednej nie usypia płytki używanej przez drugą.
+Samo sprawdzanie TalkBack dodaje jedno krótkie żądanie HTTPS do okna
+wysyłki (timeout 3 s). Budżet odnawia się o północy UTC; bez poprawnego
+zegara po 24 godzinach od pierwszego użycia. Cofnięcie zegara nie odnawia
+budżetu. Zużycie jest przechowywane w RTC i przetrwa deep sleep.
+
+Przez internet dostępne są konfiguracja, diagnostyka i aktualizacja
+z manifestu GitHub. Historia binarna oraz wgrywanie lokalnego pliku `.bin`
+wymagają połączenia lokalnego. Zmiana konfiguracji Wi-Fi może odciąć dostęp
+zdalny. Po zdalnym restarcie portal czeka na ponowne połączenie urządzenia
+i wynik operacji; sesja jest wznawiana na pozostały czas.
+
+Ta funkcja używa osobnego wpisu wznowienia RTC z kontrolą CRC, bez kolejnej
+zmiany układu `RetainedState`. Wcześniejsze dodanie budżetu TalkBack zmieniło
+jego układ: pierwsze uruchomienie tej wersji reinicjalizuje stare RTC
+(w tym niewysłane próbki); historia we flash pozostaje.
+Sekrety nie wracają w JSON ani logach; pusty sekret w formularzu zachowuje
+poprzednią wartość. Usuwanie: `remote_pass_clear=1`, `talkback_key_clear=1`.
+Szczegóły protokołu i API: [kontrakt](docs/remote-protocol.md),
+[API](docs/API.md#remote-tunnel).

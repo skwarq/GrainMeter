@@ -199,3 +199,63 @@ Szacunek dla pomiaru co 15 min i wysyłki co godzinę: ~3,5 mAh/dobę (z SNTP),
 (szacunek – do zmierzenia), pomiary ~16 %, start ~5 %. Ogniwo LP475085:
 realnie 12–15 miesięcy bez słońca (samorozładowanie 2–3 %/mies.), w
 najgorszym przypadku z karty (10 %/mies.) ok. 7–8 miesięcy.
+
+Portal i dashboard pokazują też czas pracy z bilansu `power_stats`:
+`dni ≈ batt_capacity_mah × SoC% / 100 / mAh_na_dobę` (domyślnie 2500 mAh).
+Po minimum godzinie obserwacji zużycie jest szacowane z mierzonych czasów
+pracy, Wi-Fi, startu i rzeczywiście odbytego snu oraz typowych prądów, nie
+z czujnika prądu. SoC pochodzi z napięciowej krzywej LiPo. Wynik nie uwzględnia
+słońca, samorozładowania, mrozu ani starzenia; prognoza z nachylenia napięcia
+pozostaje osobno.
+
+## Zegar po restarcie (C1)
+
+ESP-IDF 6.1 na C6 z domyślnym RTC + high-resolution timer powinien zachować
+czas także przez `esp_restart()`, nie tylko deep sleep. RTC biegnie przez
+SW reset; offset epoki jest w rejestrach RTC, a kalibrowany licznik
+`esp_rtc_get_time_us()` ma osobny zapis kontrolny w RTC RAM. High-resolution
+timer zaczyna od nowa. Zobacz
+[System Time](https://docs.espressif.com/projects/esp-idf/en/release-v6.1/esp32c6/api-reference/system/system_time.html)
+oraz implementacje IDF `components/esp_libc/src/port/esp_time_impl.c` i
+`components/esp_hw_support/esp_clk.c`.
+
+W aplikacji `coldBoot` oznacza każdy start inny niż deep sleep, ale **nie
+kasuje RetainedState**. `GrainMeter::begin()` inicjalizuje go tylko po
+nieudanej walidacji magic/size/CRC/indeksów. Awaria podczas zmiany stanu przed
+`seal()` albo zmiana rozmiaru/przesunięcie danych RTC przy OTA może spowodować
+odrzucenie. RetainedState nie zawierał offsetu zegara; jego poprawny CRC nie
+gwarantował poprawnego `time()`. Log `time sync failed (no samples)` oznacza,
+że SNTP nie uzyskał czasu i zegar był nieważny; brak próbek nie jest przyczyną
+utraty czasu. HTTP Date koryguje zegar dopiero po odpowiedzi HTTPS, a przy
+nieważnym zegarze okno kończy się przed wysyłką (TLS sprawdza daty certyfikatu).
+Sam SW reset nie wyjaśnia obserwacji: na płytce sprawdzić rzeczywisty reset
+(szczególnie brownout), wynik SNTP oraz efektywne `CONFIG_LIBC_TIME_SYSCALL`
+i `CONFIG_ESP_TIME_FUNCS_USE_RTC_TIMER`, nie tylko sdkconfig.defaults.
+
+Zegar ma teraz niezależny, 32-bajtowy `RTC_NOINIT` zapis GMC1: epoka
+i RTC w mikrosekundach, rozmiar i CRC. Format RetainedState pozostaje bez
+zmian. Zapis jest odświeżany przy pomiarze, udanej synchronizacji/korekcie,
+odtworzeniu i tuż przed wspólną ścieżką restartu HTTP/MQTT/OTA/konsole.
+Po SW/PANIC/WDT odtworzenie wymaga poprawnego zapisu, wieku do 24 h,
+licznika RTC nie mniejszego niż przy zapisie i epoki w zakresie API.
+Do epoki dodawany jest upływ RTC, bez cofania poprawnego natywnego zegara.
+Power-on i brownout unieważniają zapis oraz zegar; deep sleep używa czasu IDF.
+Przerwany zapis albo przesunięty/niezgodny format po OTA jest bezpiecznie
+odrzucany. Pierwsza aktualizacja z firmware bez GMC1 wymaga normalnego SNTP.
+Konfiguracja jawnie wybiera RTC + high-resolution timer; para czasu jest
+zapisywana tylko przy spójnym, krótkim odczycie zegarów.
+
+`clock.restored` w `/api/diag` oznacza zaakceptowane odtworzenie w tym starcie.
+Nie jest to synchronizacja: najbliższe okno nadal próbuje SNTP (także po
+kolejnym deep sleep). Bez sieci pomiary mogą korzystać z odtworzonego czasu.
+Start sesji zdalnej z nieważnym zegarem próbuje tego samego ograniczonego
+SNTP przed MQTT; nie zmienia protokołu, kluczy ani liczenia czasu sesji.
+
+Na płytce: po udanym SNTP sprawdzić `/api/restart`, OTA HTTP i MQTT oraz
+kontrolowany panic/WDT przy odłączonym Internecie. Oczekiwane: rosnący RTC,
+`time_valid=true`, niezerowe `until` i czas nowego pomiaru, log odzyskania
+oraz ponowna próba SNTP w oknie. Sprawdzić też deep sleep, zanik zasilania
+i brownout (bez odtworzenia), start sesji bez czasu z dostępnym SNTP
+(ważne `until`) i bez SNTP (jawny błąd, `until=0`). Odtworzenie nie odtwarza
+utraconego bufora pomiarów ani historii RAM; `last_measure_epoch` może być
+zero do nowego pomiaru, jeśli RetainedState został odrzucony.
