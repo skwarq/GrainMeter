@@ -475,7 +475,22 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
   }
   pollTalkback();
   if (cfg_.remoteUpdateEnabled() && updateCheckDue(nowMono)) {
-    checkRemoteUpdate(true, false, "");
+    // Scheduled checks only inform: installing is always the user's click
+    // (portal: Update -> Install). A newly announced version is reported
+    // once through ntfy/Telegram when configured.
+    char before[sizeof(st_->updateLatest)];
+    memcpy(before, st_->updateLatest, sizeof(before));
+    checkRemoteUpdate(false, false, "");
+    if (lastRemoteUpdateResult() == RemoteUpdateResult::Available &&
+        strcmp(before, st_->updateLatest) != 0 &&
+        notificationsConfigured(cfg_)) {
+      char text[160];
+      snprintf(text, sizeof(text),
+               "%s: dostępna nowa wersja oprogramowania %s (działa %s). "
+               "Instalacja: portal -> Aktualizacja.",
+               cfg_.deviceName, st_->updateLatest, GM_FW_VERSION);
+      for (unsigned ch = 0; ch < 2; ++ch) notifySend(cfg_, *p_.http, ch, text);
+    }
   }
   p_.http->endSession();
   p_.net->disconnect();

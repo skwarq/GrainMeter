@@ -70,11 +70,22 @@ class RemoteUpdateTest : public ::testing::Test {
 
 }  // namespace
 
-TEST_F(RemoteUpdateTest, InstallsNewerVersionAndRestarts) {
+TEST_F(RemoteUpdateTest, ScheduledCheckOnlyInformsThenInstallOnRequest) {
   const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
   publish("9.9.9", img, hexSha(img));
   t.runFor(3600);  // first upload window checks the manifest
-  EXPECT_EQ(code(), gm::RemoteUpdateResult::Updated) << result();
+  // A scheduled check never installs by itself: it only announces.
+  EXPECT_EQ(code(), gm::RemoteUpdateResult::Available) << result();
+  EXPECT_STREQ(t.dev->app().state().updateLatest, "9.9.9");
+  EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");
+  t.runFor(25 * 3600);  // still only announced a day later
+  EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    EXPECT_EQ(t.dev->app().remoteUpdateNow(true),
+              gm::RemoteUpdateResult::Updated);
+  }
+  t.runFor(60);
   EXPECT_FALSE(t.dev->restartPending());  // tick() already restarted
   EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_1");
   // samples measured before the update survive the (software) restart
@@ -193,7 +204,11 @@ TEST_F(RemoteUpdateTest, SameVersionIsNotDownloaded) {
 TEST_F(RemoteUpdateTest, WrongHashLeavesBootPartitionUnchanged) {
   const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
   publish("9.9.9", img, std::string(64, '0'));
-  t.runFor(3600);
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    t.dev->app().remoteUpdateNow(true);  // the user's "Install" click
+  }
+  t.runFor(60);
   EXPECT_EQ(code(), gm::RemoteUpdateResult::Failed);
   EXPECT_NE(result().find("sha256"), std::string::npos);
   EXPECT_FALSE(t.dev->ota().pending());
@@ -203,7 +218,11 @@ TEST_F(RemoteUpdateTest, WrongHashLeavesBootPartitionUnchanged) {
 TEST_F(RemoteUpdateTest, ForeignImageRejectedEvenWithMatchingHash) {
   const auto img = fakeImage(150000, 0x0002, "grainmeter", "9.9.9");  // S2
   publish("9.9.9", img, hexSha(img));
-  t.runFor(3600);
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    t.dev->app().remoteUpdateNow(true);  // the user's "Install" click
+  }
+  t.runFor(60);
   EXPECT_EQ(code(), gm::RemoteUpdateResult::Failed);
   EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");
 }
@@ -212,6 +231,11 @@ TEST_F(RemoteUpdateTest, RolledBackVersionIsNotRetried) {
   const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
   publish("9.9.9", img, hexSha(img));
   sim("action=ota_fail_boot&arg=on");
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    EXPECT_EQ(t.dev->app().remoteUpdateNow(true),
+              gm::RemoteUpdateResult::Updated);
+  }
   t.runFor(3600);
   EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");  // rolled back
   EXPECT_EQ(t.dev->ota().rejectedVersion(), "9.9.9");
@@ -238,7 +262,8 @@ TEST_F(RemoteUpdateTest, LowBatterySkipsUpdateAndCriticalStopsRadio) {
   publish("9.9.9", img, hexSha(img));
   sim("action=battery&value=3600");  // economy (< 3650)
   t.runFor(4 * 3600 + 1800);
-  EXPECT_EQ(code(), gm::RemoteUpdateResult::Skipped) << result();
+  // Scheduled checks only announce, also on a low battery.
+  EXPECT_EQ(code(), gm::RemoteUpdateResult::Available) << result();
   EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");
   const unsigned connects = t.dev->network().connectCount();
   EXPECT_LE(connects, 2u);  // every 4 h instead of hourly
@@ -298,7 +323,11 @@ TEST_F(RemoteUpdateTest, FollowsReleaseRedirects) {
                              "%2Freleases%2Flatest%2Fdownload%2Fmanifest.json";
     configure(body.c_str());
   }
-  t.runFor(3600);
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    t.dev->app().remoteUpdateNow(true);  // the user's "Install" click
+  }
+  t.runFor(60);
   srv.stop();
   th.join();
   EXPECT_EQ(code(), gm::RemoteUpdateResult::Updated) << result();

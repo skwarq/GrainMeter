@@ -631,7 +631,11 @@ diagnostycznym (`status`: `power=...`). Próg 0 wyłącza dany tryb.
 ## Zdalna aktualizacja i podpisywanie obrazów
 
 Ustaw `update_url` (manifest JSON przez HTTPS) i `update_check_h`
-(domyślnie 24). W oknie wysyłki, w trybie normalnym, urządzenie pobiera:
+(domyślnie 24). W oknie wysyłki urządzenie pobiera manifest i **tylko
+informuje** o nowszej wersji (portal: Aktualizacja; raz na nową wersję także
+ntfy/Telegram, jeśli skonfigurowane) — **nigdy nie instaluje samo**. Instalacja
+to zawsze Twoja decyzja: **Zainstaluj** w portalu (lokalnie albo przez sesję
+zdalną). Co wnosi dana wersja: [CHANGELOG.md](CHANGELOG.md). Manifest:
 
 ```json
 {"version": "0.2.0",
@@ -640,7 +644,7 @@ Ustaw `update_url` (manifest JSON przez HTTPS) i `update_check_h`
  "service_id": 7, "service_min": 15}
 ```
 
-- Nowsza `version` → strumieniowe pobranie do nieaktywnego slotu tą samą
+- Po kliknięciu **Zainstaluj**: nowsza `version` → strumieniowe pobranie do nieaktywnego slotu tą samą
   ścieżką co upload z portalu (nagłówek, chip, projekt), zgodność SHA-256 z
   manifestem i wersji w obrazie z manifestem, `esp_ota_end` → restart →
   samo-test → potwierdzenie albo rollback.

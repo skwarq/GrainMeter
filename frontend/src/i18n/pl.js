@@ -511,7 +511,7 @@ export default {
   'remote.lastCheck': 'Ostatnie sprawdzenie',
   'remote.rejected': 'Wycofana wersja (nieudany start)',
   'remote.note':
-    'Urządzenie pobiera manifest JSON (version, url, sha256) w oknie wysyłki. Nowsza wersja jest pobierana do nieaktywnego slotu, sprawdzana (SHA-256, chip, projekt) i uruchamiana z ochroną rollback. Wersja wycofana po nieudanym starcie nie jest instalowana ponownie.',
+    'Urządzenie sprawdza manifest JSON (version, url, sha256) w oknie wysyłki i tylko informuje o nowej wersji — nie instaluje samo. Po kliknięciu „Zainstaluj” nowsza wersja jest pobierana do nieaktywnego slotu, sprawdzana (SHA-256, chip, projekt) i uruchamiana z ochroną rollback. Wersja wycofana po nieudanym starcie nie jest instalowana ponownie.',
   'remote.never_checked': 'jeszcze nie sprawdzano',
   'remote.up_to_date': 'aktualna',
   'remote.updated': 'zainstalowano',
@@ -519,7 +519,8 @@ export default {
   'remote.skipped': 'pominięto',
   'remote.service_requested': 'zdalne okno serwisowe',
   'remote.available': 'dostępna nowsza',
-  'remote.auto': 'Automatyczne sprawdzanie',
+  'remote.auto': 'Automatyczne sprawdzanie (tylko informuje)',
+  'remote.changelog': 'Co nowego (CHANGELOG)',
   'remote.autoOn': 'włączone',
   'remote.autoOff': 'wyłączone',
   'remote.check': 'Sprawdź dostępność',

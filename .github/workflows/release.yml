@@ -95,6 +95,17 @@ jobs:
           (cd "$out" && sha256sum -- * > SHA256SUMS)
           cat "$out/SHA256SUMS"
 
+      - name: Release notes from CHANGELOG.md
+        run: |
+          # The section of this version (from "## X.Y.Z" up to the next "## ").
+          awk -v v="## ${VERSION}" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md > section.md
+          test -s section.md || { echo "CHANGELOG.md has no section for ${VERSION}"; exit 1; }
+          { cat section.md
+            echo
+            echo "---"
+            echo "Signed firmware ${VERSION} for FireBeetle 2 ESP32-C6. Devices announce new versions; install from the portal (Update → Install). First flash: grainmeter-${VERSION}-esp32c6-flash.zip (see README)."
+          } > release-notes.md
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -103,4 +114,4 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --title "GrainMeter ${VERSION}" \
             --verify-tag \
-            --notes "Signed firmware ${VERSION} for FireBeetle 2 ESP32-C6. Devices with the signed profile update themselves from manifest.json; first flash: grainmeter-${VERSION}-esp32c6-flash.zip (see README)."
+            --notes-file release-notes.md

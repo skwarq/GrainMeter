@@ -299,7 +299,7 @@ mock TalkBack FIFO. When `report_url` uses `mock://`, TalkBack uses
 | `batt_crit_mv` | 0 or 2500..4500 (3500), <= low | below: critical mode |
 | `batt_capacity_mah` | 100..20000 (2500), integer | cell capacity for consumption-based runtime; stored as `batt_capacity` (NVS key limit), same on PC |
 | `update_url` | "" or https:// (PC also http://, mock://) | remote update manifest |
-| `update_check_h` | 0..720 (24) | manifest check period, 0 = off |
+| `update_check_h` | 0..720 (24) | manifest check period (announce only, never installs), 0 = off |
 | `static_ip`, `gateway`, `netmask`, `dns` | "" or a.b.c.d | static IPv4 (empty = DHCP); dns defaults to gateway |
 | `log_udp` | 0/1, default 0; JSON boolean | 0 = logs only in the portal view (`/api/logs`), 1 = also send them to `log_dest`; the portal shows one choice: portal only / UDP / MQTT |
 | `log_dest` | `udp` or `mqtt`, default `udp` | form and JSON use strings; persistent store uses numeric 0/1 |
@@ -340,8 +340,12 @@ row's runtime; a newer full row without consumption does clear it.
  "service_id": 7, "service_min": 15}
 ```
 
-Checked during an upload window every `update_check_h` hours (normal power
-mode only). A newer `version` is streamed into the inactive slot through the
+Checked during an upload window every `update_check_h` hours. The scheduled
+check only announces a newer version (`remote_update.result = available`,
+`latest`; once per new version also through ntfy/Telegram when configured);
+it never installs. Installing is the user's action: `POST
+/api/update/install` (portal: Update → Install, also over the MQTT tunnel).
+On install a newer `version` is streamed into the inactive slot through the
 same validation as a portal upload, its SHA-256 must match, the version in
 the image must equal the manifest; then the device restarts (rollback
 protection as for local OTA). `service_id` (optional): each new id opens the

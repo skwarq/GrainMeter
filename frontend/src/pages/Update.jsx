@@ -319,7 +319,17 @@ export function Update() {
             {canInstall && remote === 'idle' && phase !== 'restarting' && (
               <p class="precheck text-ok">
                 <Icon name="download" size={16} />
-                <span>{t('remote.newer', { v: ru.latest, r: ru.running })}</span>
+                <span>{t('remote.newer', { v: ru.latest, r: ru.running })}</span>{' '}
+                <a
+                  href={
+                    'https://github.com/skwarq/GrainMeter/blob/main/CHANGELOG.md#' +
+                    String(ru.latest).replace(/\./g, '')
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {t('remote.changelog')}
+                </a>
               </p>
             )}
             <div class="row-actions">
