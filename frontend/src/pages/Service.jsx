@@ -1,4 +1,4 @@
-import { useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import * as api from '../api.js';
 import { useI18n } from '../components/i18n.js';
 import { useAction, useStatus } from '../components/hooks.js';
@@ -29,13 +29,26 @@ export function Service() {
   const exitAct = useAction();
   const [ask, setAsk] = useState(null);
   const [, bump] = useState(0);
+  const restartRefresh = useRef({ active: true, timer: 0 });
+  useEffect(() => {
+    const current = restartRefresh.current;
+    current.active = true;
+    return () => {
+      current.active = false;
+      clearTimeout(current.timer);
+    };
+  }, []);
 
   if (!s) return <Loading text={t('common.loading')} />;
   const esp = s.platform === 'esp32c6';
 
   const doRestart = () => {
     setAsk(null);
-    restartAct.run(() => api.restart(), { ok: () => t('service.restarting') }).then(() => setTimeout(refresh, 4000));
+    restartAct
+      .run(() => api.restart(), { ok: () => t('service.restarting') })
+      .then((r) => {
+        if (r && restartRefresh.current.active) restartRefresh.current.timer = setTimeout(refresh, 4000);
+      });
   };
   const doExit = () => {
     setAsk(null);

@@ -9,6 +9,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "service/remote_session.h"
 
 static volatile int64_t s_lastLineUs = 0;
 
@@ -62,7 +63,7 @@ static void consoleTask(void*) {
         DeviceLock lock;
         static gm::Shell* shell =
             new gm::Shell(*device().app, writeOut, nullptr);
-        shell->exec(line);
+        if (!remoteConsole(line, writeOut, nullptr)) shell->exec(line);
         restart = shell->restartRequested();
       }
       if (restart) {
@@ -92,7 +93,7 @@ void usbConsoleStart() {
     return;
   }
   s_lastLineUs = -60 * 1000000LL;
-  xTaskCreate(consoleTask, "console", 6144, nullptr, 3, nullptr);
+  xTaskCreate(consoleTask, "console", 8192, nullptr, 3, nullptr);
 }
 
 bool usbConnected() { return usb_serial_jtag_is_connected(); }

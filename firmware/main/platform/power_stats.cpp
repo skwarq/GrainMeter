@@ -14,7 +14,7 @@ struct Stats {
   uint64_t awakeMsTotal;  // app time, all wakes
   uint64_t bootMsTotal;   // before app_main (timer wakes only)
   uint64_t wifiMsTotal;   // radio on for the station
-  uint64_t sleepSTotal;   // requested deep sleep time
+  uint64_t sleepSTotal;   // completed deep sleep time
   uint32_t lastAwakeMs;
   uint32_t maxAwakeMs;
   uint32_t lastBootMs;
@@ -22,10 +22,10 @@ struct Stats {
   uint32_t lastConnectMs;
   uint32_t lastSntpMs;
   uint64_t sleepStartRtcUs;  // RTC time when the last sleep started
-  uint32_t sleepUs;          // its requested length
+  uint64_t sleepUs;          // its requested length
 };
 
-const uint32_t kMagic = 0x50575231;  // "PWR1"
+const uint32_t kMagic = 0x50575232;  // "PWR2"
 RTC_NOINIT_ATTR Stats s;
 
 int64_t s_wifiStartUs = -1;
@@ -47,6 +47,11 @@ void powerStatsBoot(bool fromDeepSleep) {
       appStartRtc - expected < 5000000) {  // plausibility: < 5 s
     s.lastBootMs = static_cast<uint32_t>((appStartRtc - expected) / 1000);
     s.bootMsTotal += s.lastBootMs;
+  }
+  if (fromDeepSleep && s.sleepStartRtcUs != 0 &&
+      appStartRtc > s.sleepStartRtcUs) {
+    const uint64_t elapsed = appStartRtc - s.sleepStartRtcUs;
+    s.sleepSTotal += (elapsed < s.sleepUs ? elapsed : s.sleepUs) / 1000000;
   }
   s.sleepStartRtcUs = 0;
 }
@@ -82,8 +87,7 @@ uint32_t powerStatsSleep(uint32_t sleepS) {
   s.lastAwakeMs = awake;
   if (awake > s.maxAwakeMs) s.maxAwakeMs = awake;
   s.awakeMsTotal += awake;
-  s.sleepSTotal += sleepS;
-  s.sleepUs = sleepS * 1000000u;
+  s.sleepUs = static_cast<uint64_t>(sleepS) * 1000000u;
   s.sleepStartRtcUs = esp_rtc_get_time_us();
   return awake;
 }
@@ -91,19 +95,27 @@ uint32_t powerStatsSleep(uint32_t sleepS) {
 uint32_t powerStatsLastBootMs() { return s.lastBootMs; }
 uint32_t powerStatsLastWifiMs() { return s.lastWifiMs; }
 
-void powerStatsWrite(gm::JsonWriter& w) {
+int32_t powerStatsMahPerDayCenti() {
   // Rough energy estimate with typical ESP32-C6 currents (to be replaced by
   // a measurement): CPU awake 25 mA, Wi-Fi on 90 mA, boot 20 mA, deep sleep
   // 0.04 mA (board + probe).
-  const double awakeH = static_cast<double>(s.awakeMsTotal) / 3.6e6;
-  const double wifiH = static_cast<double>(s.wifiMsTotal) / 3.6e6;
+  const int64_t nowUs = esp_timer_get_time();
+  const double awakeH =
+      (static_cast<double>(s.awakeMsTotal) + nowUs / 1000.0) / 3.6e6;
+  const double wifiH =
+      (static_cast<double>(s.wifiMsTotal) +
+       (s_wifiStartUs >= 0 ? (nowUs - s_wifiStartUs) / 1000.0 : 0)) /
+      3.6e6;
   const double bootH = static_cast<double>(s.bootMsTotal) / 3.6e6;
   const double sleepH = static_cast<double>(s.sleepSTotal) / 3600.0;
   const double totalH = awakeH + bootH + sleepH;
   const double mAh =
       (awakeH - wifiH) * 25.0 + wifiH * 90.0 + bootH * 20.0 + sleepH * 0.04;
-  const int32_t perDayCenti =
-      totalH > 0.01 ? static_cast<int32_t>(mAh / totalH * 24.0 * 100.0) : 0;
+  return totalH >= 1.0 ? static_cast<int32_t>(mAh / totalH * 24.0 * 100.0 + 0.5)
+                       : -1;
+}
+
+void powerStatsWrite(gm::JsonWriter& w) {
   const uint32_t avgAwake =
       s.wakes > 1 ? static_cast<uint32_t>(s.awakeMsTotal / (s.wakes - 1)) : 0;
   w.key("power_stats")
@@ -120,6 +132,11 @@ void powerStatsWrite(gm::JsonWriter& w) {
       .kvu("awake_s_total", s.awakeMsTotal / 1000)
       .kvu("wifi_s_total", s.wifiMsTotal / 1000)
       .kvu("sleep_s_total", s.sleepSTotal);
-  w.key("est_mah_per_day").centi(perDayCenti);
+  const int32_t perDayCenti = powerStatsMahPerDayCenti();
+  w.key("est_mah_per_day");
+  if (perDayCenti < 0)
+    w.null();
+  else
+    w.centi(perDayCenti);
   w.endObject();
 }

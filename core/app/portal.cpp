@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "util/base64url.h"
 #include "util/log.h"
 
 namespace gm {
@@ -52,6 +53,20 @@ bool Portal::authorized(const char* password) {
 
 static bool is(const PortalRequest& r, const char* method, const char* path) {
   return strcmp(r.method, method) == 0 && strcmp(r.path, path) == 0;
+}
+
+static bool formSize(const Form& form, const char* key, size_t* out) {
+  char text[24];
+  if (!form.get(key, text, sizeof(text)) || !text[0]) return false;
+  size_t n = 0;
+  for (const char* p = text; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+    const size_t digit = static_cast<size_t>(*p - '0');
+    if (n > (SIZE_MAX - digit) / 10) return false;
+    n = n * 10 + digit;
+  }
+  *out = n;
+  return true;
 }
 
 // "<from>/<to>" with decimal epoch seconds, from <= to.
@@ -104,11 +119,36 @@ int wifiScanNormalize(WifiNetwork* list, int n) {
 }
 
 bool Portal::handle(const PortalRequest& req, PortalReply* r) {
+  app_.otaUpload().tick();
   r->restartAfter = false;
   if (strncmp(req.path, "/api/", 5) != 0) {
     return false;
   }
   // ---- read-only ----
+  if (strcmp(req.method, "GET") == 0 &&
+      strncmp(req.path, "/api/logs/", 10) == 0) {
+    const char* p = req.path + 10;
+    uint64_t since = 0;
+    bool valid = *p != '\0';
+    for (; *p; ++p) {
+      if (*p < '0' || *p > '9' ||
+          since > (UINT64_MAX - static_cast<unsigned>(*p - '0')) / 10) {
+        valid = false;
+        break;
+      }
+      since = since * 10 + static_cast<unsigned>(*p - '0');
+    }
+    if (!valid) {
+      replyError(r, 400, "use /api/logs/<since> (unsigned sequence)");
+    } else {
+      LogSource* logs = app_.ports().sys->logSource();
+      if (!logs || !logs->read(since, out_, 8192))
+        replyError(r, 503, "log preview unavailable");
+      else
+        reply(r, 200);
+    }
+    return true;
+  }
   if (is(req, "GET", "/api/status")) {
     JsonWriter w(out_, sizeof(out_));
     app_.writeStatus(w);
@@ -182,7 +222,7 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
   }
   if (is(req, "GET", "/api/ota")) {
     JsonWriter w(out_, sizeof(out_));
-    app_.ota().writeJson(w);
+    app_.ota().writeJson(w, OtaUpload::kChunkSize);
     reply(r, 200);
     return true;
   }
@@ -208,6 +248,66 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
 
   if (is(req, "POST", "/api/login")) {
     replyOk(r, "authorized");
+  } else if (is(req, "POST", "/api/ota/begin")) {
+    size_t size = 0;
+    char hash[65], name[64];
+    OtaUpload& upload = app_.otaUpload();
+    if (!formSize(form, "size", &size) ||
+        !form.get("sha256", hash, sizeof(hash)) ||
+        !form.get("name", name, sizeof(name))) {
+      replyError(r, 400, "size, sha256 and name required");
+    } else if (!upload.begin(
+                   size, hash, name,
+                   powerModeFor(app_.ports().sys->batteryMv(), app_.config()) ==
+                       PowerMode::Critical)) {
+      replyError(r, upload.httpStatus(), upload.error());
+    } else {
+      JsonWriter w(out_, sizeof(out_));
+      w.beginObject()
+          .kvb("ok", true)
+          .kvu("chunk", OtaUpload::kChunkSize)
+          .kvu("next", 0)
+          .endObject();
+      reply(r, 200);
+    }
+  } else if (is(req, "POST", "/api/ota/chunk")) {
+    size_t off = 0;
+    int len = -1;
+    if (formSize(form, "off", &off) &&
+        form.get("d", chunkData_, sizeof(chunkData_))) {
+      len = base64urlDecode(chunkData_, strlen(chunkData_),
+                            reinterpret_cast<uint8_t*>(chunkData_),
+                            OtaUpload::kChunkSize);
+    }
+    OtaUpload& upload = app_.otaUpload();
+    if (len <= 0) {
+      replyError(r, 400, "chunk");
+    } else if (!upload.chunk(off, reinterpret_cast<uint8_t*>(chunkData_),
+                             static_cast<size_t>(len))) {
+      JsonWriter w(out_, sizeof(out_));
+      w.beginObject().kvb("ok", false).kv("error", upload.error());
+      if (strcmp(upload.error(), "offset") == 0) w.kvu("next", upload.next());
+      w.endObject();
+      reply(r, upload.httpStatus());
+    } else {
+      JsonWriter w(out_, sizeof(out_));
+      w.beginObject().kvb("ok", true).kvu("next", upload.next()).endObject();
+      reply(r, 200);
+    }
+  } else if (is(req, "POST", "/api/ota/finish")) {
+    char hash[65] = "";
+    form.get("sha256", hash, sizeof(hash));
+    OtaUpload& upload = app_.otaUpload();
+    if (!upload.finish(hash)) {
+      replyError(r, upload.httpStatus(), upload.error());
+    } else {
+      otaFinish(r);
+    }
+  } else if (is(req, "POST", "/api/ota/abort")) {
+    app_.otaUpload().abort();
+    JsonWriter w(out_, sizeof(out_));
+    w.beginObject().kvb("ok", true).endObject();
+    reply(r, 200);
   } else if (is(req, "POST", "/api/config")) {
     if (app_.ota().busy()) {
       replyError(r, 409, "update in progress");
@@ -324,6 +424,34 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
       replyOk(r, "restarting");
       r->restartAfter = true;
     }
+  } else if (is(req, "POST", "/api/remote/extend")) {
+    long minutes = 0;
+    RemoteSessionPort* remote = app_.ports().remote;
+    if (!form.getInt("minutes", 1, 60, &minutes)) {
+      replyError(r, 400, "minutes: 1..60");
+    } else if (!remote || !remote->active()) {
+      replyError(r, 409, "no_session");
+    } else {
+      RemoteSessionInfo info;
+      const RemoteExtendResult result =
+          remote->extend(static_cast<uint32_t>(minutes), &info);
+      if (result != RemoteExtendResult::Ok) {
+        replyError(
+            r, 409,
+            result == RemoteExtendResult::Budget ? "budget" : "no_session");
+      } else {
+        JsonWriter w(out_, sizeof(out_));
+        w.beginObject()
+            .kvb("ok", true)
+            .kvu("until", app_.ports().clock->wallValid()
+                              ? app_.ports().clock->epoch() + info.remainingS
+                              : 0)
+            .kvu("remaining_s", info.remainingS)
+            .kvu("budget_left_s", info.budgetLeftS)
+            .endObject();
+        reply(r, 200);
+      }
+    }
   } else if (is(req, "POST", "/api/service/exit")) {
     char msg[96] = "";
     if (app_.ota().busy()) {
@@ -364,6 +492,7 @@ bool Portal::otaStart(const char* password, size_t contentLength, OtaBody kind,
                       const char* contentType, const char* fileName,
                       PortalReply* r) {
   r->restartAfter = false;
+  app_.otaUpload().tick();
   if (!authorized(password)) {
     replyError(r, 401, "wrong or missing service password");
     return false;
@@ -418,6 +547,7 @@ void Portal::otaFinish(PortalReply* r) {
       .kv("message", "image verified and selected for next boot; restarting")
       .kv("version", ota.image().version)
       .kvu("bytes", ota.received())
+      .kvb("restarting", true)
       .endObject();
   reply(r, 200);
   r->restartAfter = true;

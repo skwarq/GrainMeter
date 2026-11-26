@@ -31,7 +31,7 @@ const csp = [
   "default-src 'none'",
   `script-src ${sha(scriptText)}`,
   `style-src ${styleText ? sha(styleText) : "'none'"}`,
-  `connect-src ${new URL(API_BASE).origin}`,
+  `connect-src ${new URL(API_BASE).origin} wss:`,
   "img-src 'self' data:",
   "manifest-src 'self'",
   "base-uri 'none'",
@@ -71,3 +71,21 @@ await writeFile(path.join(OUT_DIR, 'manifest.webmanifest'), JSON.stringify(manif
 console.log(
   `dashboard: ${path.relative(process.cwd(), OUT_DIR)}/index.html ${(html.length / 1024).toFixed(1)} KiB, API ${API_BASE}`,
 );
+
+// Keep the MQTT client out of the firmware portal bundle.
+const remoteResult = await esbuild.build(esbuildOptions({ entry: 'src/remote/main.jsx' }));
+const remoteScript = escapeInline(remoteResult.outputFiles.find((f) => f.path.endsWith('.js')).text.trim(), 'script');
+const remoteStyle = escapeInline(remoteResult.outputFiles.find((f) => f.path.endsWith('.css')).text.trim(), 'style');
+const remoteCsp = csp
+  .replace(sha(scriptText), sha(remoteScript))
+  .replace(sha(styleText), sha(remoteStyle))
+  .replace(
+    'connect-src ' + new URL(API_BASE).origin,
+    'connect-src ' + new URL(API_BASE).origin + ' https://api.thingspeak.com',
+  );
+const remoteHtml = template
+  .replace('<!--CSP-->', () => '<meta http-equiv="Content-Security-Policy" content="' + remoteCsp + '" />')
+  .replace('<!--STYLE-->', () => '<style>' + remoteStyle + '</style>')
+  .replace('<!--SCRIPT-->', () => '<script>' + remoteScript + '</script>');
+await writeFile(path.join(OUT_DIR, 'remote.html'), remoteHtml);
+console.log('dashboard: remote.html (MQTT service portal)');

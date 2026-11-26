@@ -106,6 +106,12 @@ JsonWriter& JsonWriter::str(const char* v) {
       case '\t':
         puts("\\t");
         break;
+      case '\b':
+        puts("\\b");
+        break;
+      case '\f':
+        puts("\\f");
+        break;
       default:
         if (*p < 0x20) {
           char esc[8];

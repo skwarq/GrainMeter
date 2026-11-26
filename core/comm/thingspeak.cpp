@@ -8,6 +8,28 @@
 
 namespace gm {
 
+bool tsFormatDiagStatus(const char* firmware, const char* wake,
+                        const char* power, uint32_t capacityMah,
+                        int32_t mahPerDayCenti, int32_t runtimeCentiDays,
+                        char* out, size_t cap) {
+  if (cap > 256) cap = 256;
+  int n = snprintf(out, cap, "fw=%s wake=%s power=%s capacity=%lu", firmware,
+                   wake, power, static_cast<unsigned long>(capacityMah));
+  if (n < 0 || static_cast<size_t>(n) >= cap) return false;
+  const int32_t values[] = {mahPerDayCenti, runtimeCentiDays};
+  const char* keys[] = {"mah", "rt"};
+  for (size_t i = 0; i < 2; ++i) {
+    if (values[i] < 0) continue;
+    const int added = snprintf(
+        out + n, cap - static_cast<size_t>(n), " %s=%ld.%02ld", keys[i],
+        static_cast<long>(values[i] / 100), static_cast<long>(values[i] % 100));
+    if (added < 0 || static_cast<size_t>(added) >= cap - static_cast<size_t>(n))
+      return false;
+    n += added;
+  }
+  return true;
+}
+
 void tsFormatTime(uint32_t epoch, char* out, size_t cap) {
   // Civil-from-days (H. Hinnant), independent of TZ and gmtime_r.
   const uint32_t secs = epoch % 86400u;

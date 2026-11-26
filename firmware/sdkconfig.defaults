@@ -20,6 +20,13 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
 CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+# Two TLS sessions at once (MQTT tunnel + manifest/firmware download over
+# HTTPS): with static buffers each session holds ~20 KB (16 KB in + 4 KB out)
+# for its whole life and the second handshake fails (ESP_ERR_HTTP_CONNECT).
+# Dynamic buffers are allocated per record and freed when idle.
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y
 
 # Captive portal requests from phones carry long headers
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
@@ -36,3 +43,9 @@ CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 # Log lines with wall-clock time HH:MM:SS.sss (local time, GM_TIMEZONE)
 # instead of milliseconds since boot.
 CONFIG_LOG_TIMESTAMP_SOURCE_SYSTEM=y
+# RTC calibration must preserve a monotonic counter across resets/sleep.
+CONFIG_LIBC_TIME_SYSCALL_USE_RTC_HRT=y
+
+# Remote portal: MQTT 3.1.1 over TLS (CA bundle configured above).
+CONFIG_MQTT_PROTOCOL_311=y
+CONFIG_MQTT_TRANSPORT_SSL=y

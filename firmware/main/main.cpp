@@ -30,6 +30,8 @@
 #include "sdkconfig.h"
 #include "service/dns_redirect.h"
 #include "service/lan_console.h"
+#include "service/remote_session.h"
+#include "service/session_hold.h"
 #include "service/usb_console.h"
 #include "service/web_portal.h"
 #include "util/log.h"
@@ -130,6 +132,11 @@ static void confirmImage(bool nvsOk, bool busOk, bool wifiOk) {
     lanMarkResume();
   }
   vTaskDelay(pdMS_TO_TICKS(800));  // let the HTTP reply leave
+  remoteBeforeRestart();
+  {
+    DeviceLock lock;
+    device().clock.checkpoint();
+  }
   esp_restart();
 }
 
@@ -169,6 +176,7 @@ static bool lanWaitLogin() {
 // moment. Runs inside the upload, i.e. with the device lock held.
 static void lanWakeHook() {
   Device& d = device();
+  remoteAfterUpload();
   if (!d.sys.lanWake || d.sys.serviceMode) {
     return;
   }
@@ -272,7 +280,7 @@ static void runWifiJoin() {
   }
 }
 
-// withAp=false: LAN console session only (no SoftAP); ends with the session.
+// withAp=false: LAN/remote leases only (no SoftAP); ends after both release.
 static void runServiceMode(bool withAp) {
   Device& d = device();
   d.sys.serviceMode = true;
@@ -300,6 +308,7 @@ static void runServiceMode(bool withAp) {
     ESP_LOGI(kTag, "service mode: Wi-Fi first, SoftAP after %lu s without it",
              static_cast<unsigned long>(apDelayS));
   }
+  bool remoteOffered = false;
   bool apWarned = false;
   webPortalStart();  // also reachable over the station link
   ledBlink(1000);
@@ -312,8 +321,20 @@ static void runServiceMode(bool withAp) {
   int64_t lastLanTryUs = -60 * 1000000LL;
   int64_t noClientS = 0;
   while (true) {
+    remotePoll();
     if (d.sys.exitService) {
-      if (withAp) break;
+      {
+        DeviceLock lock;
+        remoteStop();
+      }
+      remotePoll();
+      if (withAp) {
+        if (holdActive(HoldOwner::Remote)) {
+          vTaskDelay(pdMS_TO_TICKS(20));
+          continue;  // Response PUBACK and retained offline precede Wi-Fi off.
+        }
+        break;
+      }
       d.sys.exitService = false;  // LAN-only: the console session ends it
     }
     if (apWanted && !apUp && !d.wifi.connected() &&
@@ -329,9 +350,9 @@ static void runServiceMode(bool withAp) {
     // Computer on USB (bench) or LAN console: portal also on the local
     // network, no timeout.
     const bool bench = usbConnected();
-    const bool lanHold = lanSessionActive();
-    if (!withAp && !lanHold) {
-      break;  // LAN console closed: the main loop decides what comes next
+    const bool sessionHold = holdActive();
+    if (!withAp && !sessionHold) {
+      break;  // Both sessions closed: main decides what comes next
     }
     // Station retries also while the SoftAP is not up yet; once it serves
     // clients, retries (channel scans) would disturb them, except on the
@@ -342,6 +363,18 @@ static void runServiceMode(bool withAp) {
       connectLan();
     }
     runWifiJoin();
+    if (withAp && !remoteOffered && d.wifi.connected()) {
+      bool configured;
+      {
+        DeviceLock lock;
+        configured = d.app->config().remoteUrl[0] != 0;
+      }
+      if (configured) {
+        remoteServiceStart();
+        remoteOffered = true;
+      }
+    }
+    remotePoll();
     if (d.wifi.connected()) {
       lanPoll(lanAnnounce(), 5000);  // script can (re)connect any time
     }
@@ -350,6 +383,8 @@ static void runServiceMode(bool withAp) {
       // Uploads only over a kept station link; otherwise the radio stays
       // on the AP.
       d.app->runDue(d.wifi.connected());
+      d.app->otaUpload().tick();  // abandoned chunked upload -> abort
+      remoteAfterUpload();  // Also catches a link lost before the drop hook.
     }
     if (d.sys.restart) {
       restartNow();
@@ -368,7 +403,7 @@ static void runServiceMode(bool withAp) {
     d.sys.serviceIdleS = idle;
     // Never leave (and never sleep) while an update is being written.
     const bool windowOver = esp_timer_get_time() - startUs >= minOpenUs;
-    if (!otaBusy && !bench && !lanHold && windowOver &&
+    if (!otaBusy && !bench && !holdActive() && windowOver &&
         idle >= CONFIG_GM_SERVICE_TIMEOUT_S) {
       ESP_LOGI(kTag, "service mode idle for %lu s",
                static_cast<unsigned long>(idle));
@@ -395,6 +430,7 @@ extern "C" void app_main(void) {
   gm::setLogSink(logSink);
   Device& d = device();
   d.lock = xSemaphoreCreateMutex();
+  d.clock.begin();  // before OTA confirmation, app state and remote resume
   boardIoInit();
 
   const bool nvsOk = initNvs() == ESP_OK && d.store.open() == ESP_OK;
@@ -423,6 +459,7 @@ extern "C" void app_main(void) {
   ports.sys = &d.sys;
   ports.ota = &d.ota;
   ports.history = d.history.open() ? &d.history : nullptr;
+  ports.remote = &remoteSessionPort();
   gm::ConfigLimits limits;
   limits.minMeasureS = 60;
   limits.allowInsecureUrl = false;  // ThingSpeak only over verified HTTPS
@@ -436,6 +473,12 @@ extern "C" void app_main(void) {
   }
   ensureServicePassword();
   usbConsoleStart();
+  d.wifi.setDropHook(lanWakeHook);
+  remoteResume();
+  if (holdActive(HoldOwner::Remote)) {
+    connectLan();
+    remotePoll();
+  }
   ESP_LOGI(kTag, "wake: %s, reset: %s", d.sys.wakeReason(),
            d.sys.resetReason());
 
@@ -443,7 +486,7 @@ extern "C" void app_main(void) {
   if (service) {
     ESP_LOGI(kTag, "woken by the service button");
   }
-  if (d.sys.coldBoot) {
+  if (d.sys.coldBoot && !holdActive(HoldOwner::Remote)) {
     service = waitForServiceButton(CONFIG_GM_SERVICE_BUTTON_WINDOW_MS);
     DeviceLock lock;
     if (d.app->config().wifiSsid[0] == '\0') {
@@ -463,8 +506,8 @@ extern "C" void app_main(void) {
     lanWake = d.app->config().lanWake != 0;
   }
   const bool resume = lanTakeResume();
-  if (d.sys.coldBoot && !resume && !service && wifiSet && lanWake &&
-      batteryAllowsRadio()) {
+  if (d.sys.coldBoot && !resume && !holdActive(HoldOwner::Remote) && !service &&
+      wifiSet && lanWake && batteryAllowsRadio()) {
     connectLan();
     if (d.wifi.connected()) {
       d.wifi.syncTime(gm::kTimeSyncTimeoutMs);
@@ -472,11 +515,10 @@ extern "C" void app_main(void) {
         ESP_LOGI(kTag, "LAN console connected after reset: staying awake");
       }
     }
-    if (!lanSessionActive()) {
+    if (!holdActive()) {
       d.wifi.setKeepStation(false);
     }
   }
-  d.wifi.setDropHook(lanWakeHook);
 
   if (resume && batteryAllowsRadio()) {
     // Restarted during a LAN console session: announce for up to 2 min.
@@ -484,8 +526,9 @@ extern "C" void app_main(void) {
     connectLan();
     for (int i = 0; i < 40 && d.wifi.connected() && !lanSessionActive(); ++i) {
       if (lanOffer(lanAnnounce(), 3000)) lanWaitLogin();
+      remotePoll();
     }
-    if (!lanSessionActive()) {
+    if (!holdActive()) {
       d.wifi.setKeepStation(false);
     }
   }
@@ -502,7 +545,8 @@ extern "C" void app_main(void) {
     const bool wanted = service || d.sys.enterService ||
                         serviceWakeButtonPressed() ||
                         (usbHost && !benchDismissed);
-    if (wanted || lanSessionActive()) {
+    remotePoll();
+    if (wanted || holdActive()) {
       if (usbHost && !service && !d.sys.enterService) {
         ESP_LOGI(kTag, "computer on USB: service mode (bench)");
       }
@@ -514,7 +558,9 @@ extern "C" void app_main(void) {
     {
       DeviceLock lock;
       sleepS = d.app->runDue(true);
+      remoteAfterUpload();
     }
+    remotePoll();
     if (d.sys.restart) {
       restartNow();
     }
@@ -524,7 +570,8 @@ extern "C" void app_main(void) {
         usbConnected() &&
         (usbConsoleIdleSeconds() < 60 ||
          (d.sys.coldBoot && esp_timer_get_time() - bootUs < 10000000));
-    if (usbActive || d.sys.enterService || lanClientConnected()) {
+    if (usbActive || d.sys.enterService || lanClientConnected() ||
+        holdActive()) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }

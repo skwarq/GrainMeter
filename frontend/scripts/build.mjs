@@ -6,7 +6,7 @@ import path from 'node:path';
 import { ROOT, bundleOnce } from './bundle.mjs';
 
 const OUT_DIR = path.resolve(ROOT, '..', 'portal');
-const GZ_BUDGET = 60 * 1024;
+const GZ_BUDGET = 72 * 1024; // served from flash (EMBED_FILES), not RAM
 
 const html = await bundleOnce({ dev: false });
 if (/\s(src|href)=["']?(https?:)?\/\//i.test(html)) {

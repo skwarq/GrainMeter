@@ -143,8 +143,20 @@ gm::HttpResult PcHttpClient::postJson(const char* url, const char* body,
   std::string reply;
   int status = -1;
 
-  if (std::strncmp(url, "mock://notify", 13) == 0 &&
-      (url[13] == '/' || url[13] == 0)) {
+  if (std::strncmp(url, "mock://talkback/", 16) == 0) {
+    ++talkbackCalls_;
+    status = 200;
+    if (!talkbackCommands_.empty()) {
+      char json[1024];
+      gm::JsonWriter w(json, sizeof(json));
+      w.beginObject()
+          .kv("command_string", talkbackCommands_.front().c_str())
+          .endObject();
+      reply = json;
+      talkbackCommands_.pop_front();
+    }
+  } else if (std::strncmp(url, "mock://notify", 13) == 0 &&
+             (url[13] == '/' || url[13] == 0)) {
     if (notifications_.size() == 12) notifications_.pop_front();
     notifications_.push_back(std::string(body, len));
     status = 200;

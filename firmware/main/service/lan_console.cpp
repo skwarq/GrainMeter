@@ -15,6 +15,8 @@
 #include "freertos/task.h"
 #include "lwip/inet.h"
 #include "lwip/sockets.h"
+#include "service/remote_session.h"
+#include "service/session_hold.h"
 #include "service/udp_log.h"
 
 static const char* kTag = "lan";
@@ -185,6 +187,9 @@ static void sessionTask(void* arg) {
           if (ok) {
             authed = true;
             s_authed = true;
+            holdAcquire(
+                HoldOwner::Lan,
+                static_cast<uint32_t>((startUs + kMaxSessionUs) / 1000000));
             shell = new gm::Shell(*device().app, tcpOut, ctx);
             tap = xRingbufferCreate(4096, RINGBUF_TYPE_NOSPLIT);
             if (tap != nullptr) logTapSet(tap);
@@ -211,7 +216,7 @@ static void sessionTask(void* arg) {
           bool restart;
           {
             DeviceLock lock;
-            shell->exec(line);
+            if (!remoteConsole(line, tcpOut, ctx)) shell->exec(line);
             restart = shell->restartRequested();
           }
           if (restart) {
@@ -252,6 +257,7 @@ static void sessionTask(void* arg) {
   lwip_close(sock);
   s_endReason = nullptr;
   s_authed = false;
+  holdRelease(HoldOwner::Lan);
   s_active = false;
   vTaskDelete(nullptr);
 }
@@ -299,7 +305,7 @@ static bool acceptClient() {
   s_endReason = nullptr;
   s_authed = false;
   s_active = true;
-  if (xTaskCreate(sessionTask, "lan", 6144,
+  if (xTaskCreate(sessionTask, "lan", 8192,
                   reinterpret_cast<void*>(static_cast<intptr_t>(c)), 3,
                   nullptr) != pdPASS) {
     lwip_close(c);
@@ -336,7 +342,7 @@ void lanPoll(const LanAnnounce& a, uint32_t helloEveryMs) {
   acceptClient();
 }
 
-bool lanSessionActive() { return s_active && s_authed; }
+bool lanSessionActive() { return holdActive(HoldOwner::Lan); }
 
 bool lanClientConnected() { return s_active; }
 

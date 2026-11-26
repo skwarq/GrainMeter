@@ -2,6 +2,7 @@ import { createContext } from 'preact';
 import { useCallback, useContext, useEffect, useRef, useState } from 'preact/hooks';
 import { describeError } from '../lib/errors.js';
 import { useI18n, errorText } from './i18n.js';
+import { createPoll } from '../lib/poll.js';
 
 export const StatusContext = createContext(null);
 /** {status, error, fetchedAt, refresh, setStatus} shared by all pages. */
@@ -16,43 +17,23 @@ export function usePoll(fn, intervalMs, enabled = true) {
   const [state, setState] = useState({ data: null, error: null, fetchedAt: 0 });
   const fnRef = useRef(fn);
   fnRef.current = fn;
-  const busy = useRef(false);
-  const timer = useRef(0);
-  const ctrl = useRef(null);
-
-  const run = useCallback(async () => {
-    if (busy.current) return;
-    busy.current = true;
-    clearTimeout(timer.current);
-    ctrl.current = new AbortController();
-    try {
-      const data = await fnRef.current(ctrl.current.signal);
-      setState({ data, error: null, fetchedAt: Date.now() });
-    } catch (e) {
-      if (e && e.kind !== 'aborted') setState((s) => ({ ...s, error: e }));
-    } finally {
-      busy.current = false;
-      if (enabled && !document.hidden) timer.current = setTimeout(run, intervalMs);
-    }
-  }, [intervalMs, enabled]);
+  const poll = useRef(null);
+  if (!poll.current) {
+    poll.current = createPoll(
+      (signal) => fnRef.current(signal),
+      (patch) => setState((s) => ({ ...s, ...patch })),
+    );
+  }
 
   useEffect(() => {
     if (!enabled) return undefined;
-    const onVis = () => {
-      if (document.hidden) clearTimeout(timer.current);
-      else run();
-    };
-    document.addEventListener('visibilitychange', onVis);
-    run();
-    return () => {
-      document.removeEventListener('visibilitychange', onVis);
-      clearTimeout(timer.current);
-      if (ctrl.current) ctrl.current.abort();
-    };
-  }, [run, enabled]);
+    const current = poll.current;
+    current.start(intervalMs);
+    return current.stop;
+  }, [intervalMs, enabled]);
 
   const set = useCallback((data) => setState({ data, error: null, fetchedAt: Date.now() }), []);
-  return { ...state, refresh: run, set };
+  return { ...state, refresh: poll.current.refresh, set };
 }
 
 /** One-shot loader with manual reload. */

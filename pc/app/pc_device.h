@@ -3,12 +3,14 @@
 #define GM_PC_DEVICE_H
 
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
 
 #include "app/grainmeter.h"
 #include "app/portal.h"
+#include "app/portal_tunnel.h"
 #include "app/shell.h"
 #include "platform/file_store.h"
 #include "platform/history_file.h"
@@ -17,12 +19,15 @@
 #include "sim/sim_network.h"
 #include "sim/sim_ota.h"
 #include "sim/sim_probe.h"
+#include "util/log_buffer.h"
 
 namespace gmpc {
 
 // The simulated GrainMeter: shared application logic + simulated hardware.
 // All entry points lock one mutex (HTTP threads, console, scheduler loop).
-class PcDevice : public gm::SystemPort {
+class PcDevice : public gm::SystemPort,
+                 public gm::RemoteSessionPort,
+                 public gm::LogSource {
  public:
   struct Options {
     std::string dataDir = "pc-data";
@@ -51,6 +56,11 @@ class PcDevice : public gm::SystemPort {
   bool otaFeed(const uint8_t* data, size_t len);
   void otaAbort(const char* reason);
   void otaFinish(gm::PortalReply* reply, std::string* body);
+  // In-process MQTT stand-in: signed tunnel requests and retained status.
+  void beginRemoteSession(const char* nonce, const char* id);
+  bool handleTunnel(const char* mid, const std::string& payload, bool retained,
+                    gm::TunnelOut* out, std::string* bodyCopy);
+  std::string remoteStatus();
   std::string shell(const std::string& line, bool* restart);
 
   // Simulated restart (after OTA or on request): RTC memory survives.
@@ -58,8 +68,11 @@ class PcDevice : public gm::SystemPort {
   bool restartPending() const { return restartPending_; }
 
   // gm::SystemPort
+  gm::LogSource* logSource() override { return this; }
+  bool read(uint64_t since, char* out, size_t cap) override;
   const char* platformName() override { return "pc-sim"; }
   int batteryMv() override;
+  int32_t batteryMahPerDayCenti() override { return batteryMahPerDayCenti_; }
   const char* wakeReason() override { return wakeReason_.c_str(); }
   const char* resetReason() override { return resetReason_.c_str(); }
   const char* rejectedFirmware() override {
@@ -74,7 +87,16 @@ class PcDevice : public gm::SystemPort {
   bool platformAction(const char* action, const gm::Form& args, char* msg,
                       size_t msgCap) override;
 
+  bool active() override { return remoteActive_; }
+  gm::RemoteSessionInfo info() override;
+  gm::RemoteExtendResult extend(uint32_t minutes,
+                                gm::RemoteSessionInfo* out) override;
+  void validRequest() override;
+
   // Access for tests.
+  void setBatteryMahPerDayCenti(int32_t value) {
+    batteryMahPerDayCenti_ = value;
+  }
   SimClock& clock() { return clock_; }
   SimProbe& probe() { return probe_; }
   SimNetwork& network() { return net_; }
@@ -88,8 +110,13 @@ class PcDevice : public gm::SystemPort {
  private:
   bool simAction(const gm::Form& args, char* msg, size_t cap);
   void provision();
+  void pollRemote();
+  void accountRemote();
 
   Options opt_;
+  std::unique_ptr<gm::LogBuffer> logs_;
+  uint64_t logLast_ = 0;
+  std::chrono::steady_clock::time_point logReadAt_;
   std::mutex mu_;
   SimClock clock_;
   SimProbe probe_;
@@ -102,12 +129,20 @@ class PcDevice : public gm::SystemPort {
   gm::RetainedState retained_;  // "RTC memory"
   std::unique_ptr<gm::GrainMeter> app_;
   std::unique_ptr<gm::Portal> portal_;
+  std::unique_ptr<gm::PortalTunnel> tunnel_;
+  std::string remoteNonce_, remoteId_, remoteOpMid_, remoteOpTarget_;
+  std::string runningVersion_ = GM_FW_VERSION;
+  bool remoteOpOk_ = false;
+  bool remoteOpReported_ = false;
   std::atomic<bool> restartPending_;
   std::string wakeReason_;
   std::string resetReason_;
   std::atomic<int> batteryOverrideMv_{0};
+  std::atomic<int32_t> batteryMahPerDayCenti_{-1};
   std::atomic<int> boardTempCenti_{2000};  // sim board_temp action
   std::atomic<unsigned> serviceRequests_{0};
+  bool remoteActive_ = false;
+  uint32_t remoteUntil_ = 0, remoteLastValid_ = 0, remoteAccounted_ = 0;
 };
 
 }  // namespace gmpc

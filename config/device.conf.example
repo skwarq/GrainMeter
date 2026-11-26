@@ -37,6 +37,8 @@ diag_every_h=
 # Progi baterii w mV (domyślnie 3650 / 3500 dla LiPo AKYGA LP475085, 0 = wyłączone)
 batt_low_mv=
 batt_crit_mv=
+# Pojemność akumulatora w mAh (100..20000, domyślnie 2500), do prognozy czasu pracy
+batt_capacity_mah=
 # Zdalna aktualizacja: adres manifestu i okres sprawdzania w godzinach
 update_url=
 update_check_h=
@@ -47,3 +49,36 @@ netmask=
 dns=
 # Serwer raportów (domyślnie https://api.thingspeak.com)
 report_url=
+
+# Logi zdalne: log_udp=1 włącza UDP lub MQTT (nazwa klucza dla zgodności).
+log_udp=
+# Cel: udp (domyślnie) albo mqtt; MQTT tylko podczas sesji zdalnej, wymaga ACL.
+log_dest=udp
+# Poziom obu transportów: 1 błędy, 2 ostrzeżenia, 3 informacje, 4 debug.
+log_level=
+# Tylko UDP: pusty host = rozgłoszenie LAN, domyślny port 5514.
+log_host=
+log_port=
+
+# --- zdalny dostęp przez internet (docs/remote-protocol.md) ------------------
+# Broker MQTT (EMQX Cloud Serverless): adres TLS dla płytki, login i hasło
+# płytki (osobny login niż w przeglądarce). Pusty remote_url = tunel wyłączony.
+remote_url=
+remote_user=
+remote_pass=
+# Identyfikator w tematach gm/<id>/... (a-z, 0-9, -; pusty = gm- + końcówka MAC)
+remote_id=
+# ThingSpeak TalkBack do wybudzania (Apps → TalkBack): ID i API Key
+talkback_id=
+talkback_key=
+# Dobowy budżet minut sesji zdalnych (domyślnie 60, 0 = zdalny dostęp wyłączony)
+remote_budget_min=
+# Limit bezczynności sesji: 1..60 minut bez poprawnego żądania, domyślnie 10.
+remote_idle_min=10
+
+# --- przeglądarka (remote.html), tylko lokalnie, NIE trafia na płytkę ---------
+# Login brokera dla strony zdalnej. scripts/remote_link.py robi z tego link
+# z wypełnionym formularzem (dane we fragmencie #, nie idą do serwera).
+web_url=
+web_user=
+web_pass=

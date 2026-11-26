@@ -1,5 +1,22 @@
 /* GrainMeter portal — own design: warm "granary" palette, phone first. */
 
+.remote-logs summary {
+  cursor: pointer;
+  font-weight: bold;
+}
+.remote-logs fieldset,
+.remote-logs label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.remote-logs pre {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 :root {
   color-scheme: light dark;
   --bg: #f3eee3;

@@ -4,12 +4,21 @@
 #include <gtest/gtest.h>
 #include <httplib.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
+#include <vector>
 
+#include "app/portal_tunnel.h"
 #include "platform/web_server.h"
 #include "support/fake_image.h"
+#include "support/gm2.h"
+#include "support/json_check.h"
+#include "support/ota_upload.h"
 #include "support/test_device.h"
+#include "util/base64url.h"
+#include "util/hmac_sha256.h"
+#include "util/json_read.h"
 
 #ifndef GM_TEST_PORTAL_DIR
 #define GM_TEST_PORTAL_DIR "portal"
@@ -55,8 +64,10 @@ TEST_F(PortalTest, StatusIsJsonWithoutSecrets) {
   EXPECT_EQ(r->get_header_value("Content-Type"), "application/json");
   EXPECT_NE(r->body.find("\"platform\":\"pc-sim\""), std::string::npos);
   EXPECT_NE(r->body.find("\"battery_forecast\":{"), std::string::npos);
+  EXPECT_EQ(jsoncheck::error(r->body), "");
   auto d = cli->Get("/api/diag");
   ASSERT_TRUE(d);
+  EXPECT_EQ(jsoncheck::error(d->body), "");
   EXPECT_NE(d->body.find("\"battery_forecast\":{"), std::string::npos);
   EXPECT_EQ(d->body.find("test-password"), std::string::npos);
   EXPECT_EQ(d->body.find("SIMULATEDKEY"), std::string::npos);
@@ -73,6 +84,179 @@ TEST_F(PortalTest, WritesNeedPassword) {
   EXPECT_EQ(r->status, 401);
   r = post("/api/login", "");
   EXPECT_EQ(r->status, 200);
+}
+
+TEST_F(PortalTest, LogPreviewReadOnlyCursorLossAndInvalidPaths) {
+  auto r = cli->Get("/api/logs/0");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  EXPECT_EQ(jsoncheck::error(r->body), "");
+  EXPECT_NE(r->body.find("pc: simulated log preview"), std::string::npos);
+  uint32_t next = 0;
+  ASSERT_TRUE(gm::jsonGetUint(r->body.c_str(), "next", &next));
+  for (int i = 0; i < 20; ++i) ASSERT_EQ(cli->Get("/api/logs/0")->status, 200);
+  r = cli->Get("/api/logs/" + std::to_string(next));
+  ASSERT_TRUE(r);
+  uint32_t lost = 0;
+  ASSERT_TRUE(gm::jsonGetUint(r->body.c_str(), "lost", &lost));
+  EXPECT_GT(lost, 0u);
+  EXPECT_LT(r->body.size(), 8192u);
+  r = cli->Get("/api/logs/999999");
+  ASSERT_TRUE(r);
+  EXPECT_NE(r->body.find("\"lines\":[]"), std::string::npos);
+  for (const char* path : {"/api/logs/", "/api/logs/-1", "/api/logs/1x",
+                           "/api/logs/1/2", "/api/logs/18446744073709551616"}) {
+    r = cli->Get(path);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->status, 400) << path;
+  }
+}
+
+TEST_F(PortalTest, ChunkedOtaPermissionsParsingOffsetAndTimeout) {
+  const auto image = fakeImage(5000);
+  const std::string hash = imageHash(image);
+  const std::string begin = "size=5000&sha256=" + hash + "&name=http.bin";
+  for (const char* path : {"/api/ota/begin", "/api/ota/chunk",
+                           "/api/ota/finish", "/api/ota/abort"}) {
+    auto r = post(path, "", false);
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->status, 401);
+  }
+  for (const char* size : {"-1", "+5000", "5000x", "184467440737095516160"}) {
+    auto r = post("/api/ota/begin",
+                  "size=" + std::string(size) + "&sha256=" + hash + "&name=x");
+    ASSERT_TRUE(r);
+    EXPECT_EQ(r->status, 400);
+  }
+  auto r = post("/api/ota/begin", begin);
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200) << r->body;
+  r = post("/api/ota/chunk", "off=0&d=invalid!");
+  EXPECT_EQ(r->status, 400);
+  r = post("/api/ota/chunk", "off=0&d=" + encodeChunk(image.data(), 1441));
+  EXPECT_EQ(r->status, 400);
+  r = post("/api/ota/chunk", "off=1440&d=" + encodeChunk(image.data(), 1440));
+  EXPECT_EQ(r->status, 409);
+  EXPECT_NE(r->body.find("\"error\":\"offset\""), std::string::npos);
+  EXPECT_NE(r->body.find("\"next\":0"), std::string::npos);
+  r = post("/api/ota/chunk", "off=0&d=" + encodeChunk(image.data(), 1440));
+  EXPECT_EQ(r->status, 200);
+  EXPECT_NE(cli->Get("/api/ota")->body.find("\"received\":1440"),
+            std::string::npos);
+  t.dev->clock().advanceMs(120000);
+  t.dev->tick();  // timeout must run even when OTA normally suppresses tick
+  r = cli->Get("/api/ota");
+  EXPECT_NE(r->body.find("upload timeout"), std::string::npos);
+  EXPECT_FALSE(t.dev->ota().pending());
+  r = post("/api/ota/begin", begin);
+  EXPECT_EQ(r->status, 200);
+  r = post("/api/ota/abort", "");
+  EXPECT_EQ(r->status, 200);
+  EXPECT_FALSE(t.dev->app().ota().busy());
+}
+
+TEST_F(PortalTest, ChunkedOtaCriticalAndHttpMutualExclusion) {
+  const auto image = fakeImage(5000);
+  const std::string begin = "size=5000&sha256=" + imageHash(image) + "&name=x";
+  post("/api/sim", "action=battery&value=2900");
+  auto r = post("/api/ota/begin", begin);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 503);
+  EXPECT_NE(r->body.find("low_battery"), std::string::npos);
+  post("/api/sim", "action=battery&value=3900");
+  gm::PortalReply reply{};
+  std::string body;
+  ASSERT_TRUE(t.dev->otaStart("test-password", image.size(), gm::OtaBody::Raw,
+                              "http.bin", &reply, &body));
+  r = post("/api/ota/begin", begin);
+  EXPECT_EQ(r->status, 409);
+  EXPECT_NE(r->body.find("\"error\":\"busy\""), std::string::npos);
+  post("/api/ota/abort", "");
+  EXPECT_TRUE(t.dev->app().ota().busy());  // chunk abort cannot cancel HTTP
+  t.dev->otaAbort("test abort");
+  r = post("/api/ota/begin", begin);
+  ASSERT_EQ(r->status, 200);
+  EXPECT_FALSE(t.dev->otaStart("test-password", image.size(), gm::OtaBody::Raw,
+                               "http.bin", &reply, &body));
+  EXPECT_EQ(reply.status, 409);
+  post("/api/ota/abort", "");
+}
+
+TEST_F(PortalTest, ChunkedOtaCompletesOverHttpWithStandardBase64AndPadding) {
+  auto image = fakeImage(5000);
+  image.back() = 0xFF;
+  image[image.size() - 2] = 0xFB;
+  const std::string hash = imageHash(image);
+  auto r =
+      post("/api/ota/begin", "size=5000&sha256=" + hash + "&name=http.bin");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  for (size_t off = 0; off < image.size();) {
+    const size_t len = std::min<size_t>(1440, image.size() - off);
+    const std::string encoded = encodeChunk(image.data() + off, len);
+    std::string standard;
+    for (const char c : encoded) {
+      standard += c == '-' ? "%2B" : c == '_' ? "%2F" : std::string(1, c);
+    }
+    if (len % 3) standard.append(3 - len % 3, '=');
+    r = post("/api/ota/chunk", "off=" + std::to_string(off) + "&d=" + standard);
+    ASSERT_TRUE(r);
+    ASSERT_EQ(r->status, 200) << r->body;
+    off += len;
+  }
+  r = post("/api/ota/finish", "sha256=" + hash);
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200) << r->body;
+  EXPECT_NE(r->body.find("\"restarting\":true"), std::string::npos);
+  EXPECT_TRUE(t.dev->restartPending());
+  t.dev->tick();
+  EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_1");
+}
+
+TEST_F(PortalTest, RemoteExtensionRequiresPasswordAndSession) {
+  auto r = post("/api/remote/extend", "minutes=10", false);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 401);
+  r = post("/api/remote/extend", "minutes=10");
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 409);
+  EXPECT_NE(r->body.find("no_session"), std::string::npos);
+  r = post("/api/config", "remote_idle_min=17");
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 200);
+  EXPECT_NE(cli->Get("/api/config")->body.find("\"remote_idle_min\":17"),
+            std::string::npos);
+  t.dev->restart("config reload");
+  EXPECT_EQ(t.dev->app().config().remoteIdleMin, 17u);
+}
+
+TEST_F(PortalTest, SimulatorSessionExtendsThroughPortalTunnelAfterDeadline) {
+  auto r = post("/api/config", "remote_url=mqtts://broker&remote_idle_min=60");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  r = post("/api/sim", "action=remote_start&minutes=10");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  t.dev->clock().advanceMs(601000);
+  const char* nonce = "0123456789abcdef0123456789abcdef";
+  const char* path = "/api/remote/extend";
+  const char* body = "minutes=1";
+  const std::string request =
+      gm2test::request("gm-test", nonce, 1, "POST", path, body, "extend");
+  std::lock_guard<std::mutex> lock(t.dev->mutex());
+  gm::Portal portal(t.dev->app());
+  gm::PortalTunnel tunnel(portal, t.dev->app());
+  tunnel.beginSession(nonce, "gm-test");
+  gm::TunnelOut out{};
+  ASSERT_TRUE(tunnel.handle("extend", request.data(), request.size(), false,
+                            t.dev->clock().monoS(), &out));
+  ASSERT_EQ(out.status, 200);
+  EXPECT_TRUE(gm2test::validMac(out.payload, "gm-test", nonce, 1, "extend"));
+  const std::string replyBody =
+      gm2test::plaintext(out.payload, "gm-test", nonce, 1, "extend");
+  EXPECT_NE(replyBody.find("\"remaining_s\":60"), std::string::npos);
+  EXPECT_NE(std::string(replyBody).find("\"until\":0"), std::string::npos);
+  EXPECT_EQ(t.dev->info().remainingS, 60u);
 }
 
 TEST_F(PortalTest, LockoutAfterRepeatedFailures) {
@@ -221,6 +405,35 @@ TEST_F(PortalTest, LocalHistoryForCharts) {
             std::string::npos);
 }
 
+TEST_F(PortalTest, BinaryHistoryThroughTunnelMatchesHttpByteForByte) {
+  ASSERT_EQ(post("/api/automap", "")->status, 200);
+  t.runFor(3 * 3600, 300);
+  const char* path = "/api/history/0/4294967295";
+  auto http = cli->Get(path);
+  ASSERT_TRUE(http);
+  ASSERT_EQ(http->status, 200);
+  ASSERT_GE(http->body.size(), 16u + 2u * 24u);
+
+  const char* nonce = "0123456789abcdef0123456789abcdef";
+  const std::string request =
+      gm2test::request("gm-test", nonce, 1, "GET", path, "", "history");
+  gm::Portal portal(t.dev->app());
+  std::unique_ptr<gm::PortalTunnel> tunnel(
+      new gm::PortalTunnel(portal, t.dev->app()));
+  tunnel->beginSession(nonce, "gm-test");
+  gm::TunnelOut out = {};
+  ASSERT_TRUE(tunnel->handle("history", request.data(), request.size(), false,
+                             0, &out));
+  ASSERT_EQ(out.status, 200);
+  EXPECT_EQ(jsoncheck::error(std::string(out.payload, out.len)), "");
+  char enc[16];
+  ASSERT_TRUE(gm::jsonGetString(out.payload, "enc", enc, sizeof(enc)));
+  EXPECT_STREQ(enc, "base64");
+  EXPECT_TRUE(gm2test::validMac(out.payload, "gm-test", nonce, 1, "history"));
+  EXPECT_EQ(gm2test::plaintext(out.payload, "gm-test", nonce, 1, "history"),
+            http->body);
+}
+
 TEST_F(PortalTest, RemoteUpdateButtonsNeedPassword) {
   EXPECT_EQ(post("/api/update/check", "", false)->status, 401);
   EXPECT_EQ(post("/api/update/install", "", false)->status, 401);
@@ -293,10 +506,21 @@ TEST_F(PortalTest, UdpLogSettingsSurviveRestart) {
   ASSERT_EQ(r->status, 200) << r->body;
   t.dev->restart("test");
   const std::string cfg = cli->Get("/api/config")->body;
-  EXPECT_NE(cfg.find("\"log_udp\":true,\"log_level\":2,\"log_host\":\"\","
+  EXPECT_NE(cfg.find("\"log_udp\":true,\"log_dest\":\"udp\","
+                     "\"log_level\":2,\"log_host\":\"\","
                      "\"log_port\":5514"),
             std::string::npos)
       << cfg;
+  r = post("/api/config", "log_dest=mqtt&log_level=4");
+  ASSERT_EQ(r->status, 200) << r->body;
+  t.dev->restart("MQTT log settings");
+  const std::string mqttCfg = cli->Get("/api/config")->body;
+  EXPECT_NE(mqttCfg.find("\"log_udp\":true,\"log_dest\":\"mqtt\","
+                         "\"log_level\":4"),
+            std::string::npos)
+      << mqttCfg;
+  EXPECT_EQ(post("/api/config", "log_dest=1")->status, 400);
+  EXPECT_EQ(cli->Get("/api/config")->body, mqttCfg);
   EXPECT_EQ(post("/api/crash/clear", "")->status, 400);  // PC: no core dump
 }
 
@@ -384,4 +608,47 @@ TEST_F(PortalTest, NoChargingGuessWhenDischarging) {
   EXPECT_NE(s.find("\"charging\":false,\"frost_charging\":false"),
             std::string::npos)
       << s;
+}
+
+TEST_F(PortalTest, TalkbackHeartbeatQueuesRemoteRequest) {
+  auto r = post("/api/config",
+                "talkback_id=7&talkback_key=remote-secret&remote_budget_min=3");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  r = post("/api/sim", "action=talkback&cmd=REMOTE+5+0");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  // No map means a heartbeat upload window (no temperature samples).
+  t.dev->tick();
+  r = cli->Get("/api/status");
+  ASSERT_TRUE(r);
+  EXPECT_NE(r->body.find("\"pending_min\":3"), std::string::npos);
+  EXPECT_NE(r->body.find("\"talkback_calls\":1"), std::string::npos);
+  EXPECT_EQ(r->body.find("remote-secret"), std::string::npos);
+  t.dev->tick();
+  EXPECT_EQ(t.dev->http().talkbackCount(), 1u);
+  uint32_t minutes = 0;
+  EXPECT_TRUE(t.dev->app().takeRemoteRequest(&minutes));
+  EXPECT_EQ(minutes, 3u);
+}
+
+TEST_F(PortalTest, TalkbackDisabledDoesNotConsumeQueue) {
+  auto r = post("/api/sim", "action=talkback&cmd=REMOTE+5+0");
+  ASSERT_TRUE(r);
+  ASSERT_EQ(r->status, 200);
+  t.dev->tick();
+  EXPECT_EQ(t.dev->http().talkbackCount(), 0u);
+  r = cli->Get("/api/status");
+  ASSERT_TRUE(r);
+  EXPECT_NE(r->body.find("\"pending_min\":0"), std::string::npos);
+  r = post("/api/config", "talkback_id=7&talkback_key=remote-secret");
+  ASSERT_TRUE(r);
+  {
+    std::lock_guard<std::mutex> lock(t.dev->mutex());
+    t.dev->app().upload();
+  }
+  r = cli->Get("/api/diag");
+  ASSERT_TRUE(r);
+  EXPECT_NE(r->body.find("\"pending_min\":5"), std::string::npos);
+  EXPECT_EQ(t.dev->http().talkbackCount(), 1u);
 }

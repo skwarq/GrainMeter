@@ -25,6 +25,7 @@ const TEXT_FIELDS = [
   'diag_every_h',
   'batt_low_mv',
   'batt_crit_mv',
+  'batt_capacity_mah',
   'update_url',
   'update_check_h',
   'static_ip',
@@ -32,11 +33,18 @@ const TEXT_FIELDS = [
   'netmask',
   'dns',
   'log_level',
+  'log_dest',
   'log_host',
   'log_port',
   'ap_delay_s',
+  'remote_url',
+  'remote_user',
+  'remote_id',
+  'talkback_id',
+  'remote_budget_min',
+  'remote_idle_min',
 ];
-const SECRET_FIELDS = ['wifi_pass', 'ts_key', 'diag_key', 'notify_tg_token'];
+const SECRET_FIELDS = ['wifi_pass', 'ts_key', 'diag_key', 'notify_tg_token', 'remote_pass', 'talkback_key'];
 
 function fromConfig(c) {
   const f = {};
@@ -44,6 +52,7 @@ function fromConfig(c) {
   for (const k of SECRET_FIELDS) f[k] = '';
   f.wifi_pass_clear = false;
   f.log_udp = !!c.log_udp;
+  f.log_dest = c.log_dest || 'udp';
   f.svc_pass = '';
   f.svc_pass2 = '';
   return f;
@@ -235,6 +244,31 @@ export function Config() {
         </div>
       </Card>
 
+      <Card title={t('config.remoteAccess')} icon="wifi">
+        <div class="form-grid">
+          {['remote_url', 'remote_user', 'remote_id', 'talkback_id', 'remote_budget_min', 'remote_idle_min'].map(
+            (k) => (
+              <Field key={k} label={t('config.' + k)}>
+                <input
+                  value={f[k]}
+                  onInput={set(k)}
+                  type={k === 'talkback_id' || (k.startsWith('remote_') && k.endsWith('_min')) ? 'number' : 'text'}
+                  min={k === 'remote_idle_min' ? 1 : 0}
+                  max={k === 'remote_idle_min' ? 60 : k === 'remote_budget_min' ? 1440 : 4294967295}
+                  maxLength={{ remote_url: 96, remote_user: 64, remote_id: 24 }[k]}
+                />
+              </Field>
+            ),
+          )}
+          {['remote_pass', 'talkback_key'].map((k) => (
+            <Field key={k} label={t('config.' + k)} hint={t('config.secretHint')}>
+              <input {...secret(k, c[k + '_set'])} maxLength={k === 'talkback_key' ? 32 : 64} />
+            </Field>
+          ))}
+        </div>
+        <p class="hint">{t('config.talkbackHint')}</p>
+      </Card>
+
       <Card title="ThingSpeak" icon="upload">
         <div class="form-grid">
           <Field label={t('config.reportUrl')} hint={t('config.reportUrlHint')} wide>
@@ -291,6 +325,18 @@ export function Config() {
               max="4500"
               value={f.batt_crit_mv}
               onInput={set('batt_crit_mv')}
+            />
+          </Field>
+          <Field label={t('config.battCapacity')}>
+            <input
+              type="number"
+              inputMode="numeric"
+              min="100"
+              max="20000"
+              step="1"
+              required
+              value={f.batt_capacity_mah}
+              onInput={set('batt_capacity_mah')}
             />
           </Field>
         </div>
@@ -403,12 +449,21 @@ export function Config() {
 
       <Card title={t('config.logs')} icon="diag">
         <div class="form-grid">
-          <label class="check field-wide">
-            <input type="checkbox" checked={f.log_udp} onChange={set('log_udp')} />
-            <span>{t('config.logUdp')}</span>
-          </label>
+          <Field label={t('config.logMode')}>
+            <select
+              value={f.log_udp ? f.log_dest : 'portal'}
+              onChange={(e) => {
+                const mode = e.currentTarget.value;
+                setF((x) => ({ ...x, log_udp: mode !== 'portal', log_dest: mode === 'portal' ? x.log_dest : mode }));
+              }}
+            >
+              <option value="portal">{t('config.logModePortal')}</option>
+              <option value="udp">UDP</option>
+              <option value="mqtt">MQTT</option>
+            </select>
+          </Field>
           <Field label={t('config.logLevel')}>
-            <select value={f.log_level} onChange={set('log_level')} disabled={!f.log_udp}>
+            <select value={f.log_level} onChange={set('log_level')}>
               <option value="1">{t('config.logLevel1')}</option>
               <option value="2">{t('config.logLevel2')}</option>
               <option value="3">{t('config.logLevel3')}</option>
@@ -423,7 +478,7 @@ export function Config() {
               placeholder="255.255.255.255"
               value={f.log_host}
               onInput={set('log_host')}
-              disabled={!f.log_udp}
+              disabled={!f.log_udp || f.log_dest !== 'udp'}
               autocapitalize="off"
               spellcheck={false}
             />
@@ -436,11 +491,19 @@ export function Config() {
               max="65535"
               value={f.log_port}
               onInput={set('log_port')}
-              disabled={!f.log_udp}
+              disabled={!f.log_udp || f.log_dest !== 'udp'}
             />
           </Field>
           <p class="muted small field-wide">
-            {t('config.logHint')} <code>nc -ulk {f.log_port || 5514}</code>
+            {!f.log_udp ? (
+              t('config.logPortalHint')
+            ) : f.log_dest === 'mqtt' ? (
+              t('config.logMqttHint')
+            ) : (
+              <>
+                {t('config.logHint')} <code>nc -ulk {f.log_port || 5514}</code>
+              </>
+            )}
           </p>
         </div>
       </Card>

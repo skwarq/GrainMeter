@@ -17,10 +17,12 @@ idf_component_register(
     service/usb_console.cpp
     service/udp_log.cpp
     service/lan_console.cpp
+    service/session_hold.cpp
+    service/remote_session.cpp
   INCLUDE_DIRS .
   REQUIRES gm_core esp_driver_gpio esp_driver_usb_serial_jtag esp_adc esp_wifi esp_netif esp_event
            nvs_flash esp_http_client esp_http_server app_update esp_partition mbedtls lwip esp_timer
-           esp_driver_tsens espcoredump esp_ringbuf
+           esp_driver_tsens espcoredump esp_ringbuf espressif__mqtt
   EMBED_FILES ${CMAKE_CURRENT_LIST_DIR}/../../portal/index.html.gz)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE -Wall -Wextra -Wshadow -Werror)

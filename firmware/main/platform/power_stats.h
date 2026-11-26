@@ -19,4 +19,6 @@ void powerStatsSntp(uint32_t ms);
 uint32_t powerStatsSleep(uint32_t sleepS);
 uint32_t powerStatsLastBootMs();
 uint32_t powerStatsLastWifiMs();
+// -1 until at least one hour of elapsed operating time is available.
+int32_t powerStatsMahPerDayCenti();
 void powerStatsWrite(gm::JsonWriter& w);

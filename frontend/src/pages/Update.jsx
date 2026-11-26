@@ -6,6 +6,7 @@ import { Card, Button, Badge, KV, Meter, PageHead, Icon } from '../components/ui
 import { describeError } from '../lib/errors.js';
 import { formatBytes } from '../lib/format.js';
 import { inspectImage } from '../lib/ota.js';
+import { uploadFirmware as uploadChunks } from '../lib/ota-upload.js';
 import { updateTone } from '../lib/power.js';
 import { formatDuration } from '../lib/format.js';
 
@@ -65,16 +66,14 @@ export function Update() {
     setCountdown(0);
     const start = Date.now();
     while (alive.current && Date.now() - start < RECONNECT_LIMIT_S * 1000) {
-      try {
-        const st = await api.getStatus();
-        if (!alive.current) return null;
+      const st = await refresh();
+      if (!alive.current) return null;
+      if (st) {
         setRunning(st);
         setPhase('back');
-        refresh();
         return st;
-      } catch {
-        await sleep(2000);
       }
+      await sleep(2000);
     }
     if (alive.current) {
       setPhase('error');
@@ -142,13 +141,21 @@ export function Update() {
 
   const start = async () => {
     if (!file) return;
+    const tunnel = api.isRemote();
+    if (tunnel && !window.confirm(t('update.confirmRemote'))) return;
     fromRemote.current = false;
     setOrigin('file');
     setError('');
     setReply(null);
     setProgress({ sent: 0, total: file.size });
     setPhase('uploading');
-    const job = api.uploadFirmware(file, (sent, total) => setProgress({ sent, total }));
+    const controller = new AbortController();
+    const job = tunnel
+      ? {
+          promise: uploadChunks(file, api, { onProgress: setProgress, signal: controller.signal }),
+          abort: () => controller.abort(),
+        }
+      : api.uploadFirmware(file, (sent, total) => setProgress({ sent, total }));
     upload.current = job;
     try {
       const r = await job.promise;
@@ -210,7 +217,7 @@ export function Update() {
       <div class="grid2">
         <Card title={t('update.upload')} icon="update">
           <label class={'dropzone' + (busy ? ' disabled' : '')}>
-            <input ref={input} type="file" onChange={pick} disabled={busy} />
+            <input ref={input} type="file" accept=".bin" onChange={pick} disabled={busy} />
             <Icon name="download" size={28} />
             <span>{file ? file.name : t('update.choose')}</span>
             <small class="muted">{file ? formatBytes(file.size) : t('update.hint')}</small>
@@ -229,12 +236,13 @@ export function Update() {
           {phase === 'uploading' && (
             <div class="progress">
               <div class="progress-row">
-                <span>{t('update.sending')}</span>
+                <span>{t(progress.stage === 'finishing' ? 'update.finishing' : 'update.sending')}</span>
                 <b>{pct} %</b>
               </div>
               <Meter value={pct / 100} label={t('update.sending')} />
               <small class="muted">
                 {formatBytes(progress.sent)} / {formatBytes(progress.total)}
+                {progress.eta != null && ' · ' + t('update.eta', { time: formatDuration(Math.ceil(progress.eta)) })}
               </small>
             </div>
           )}
@@ -250,7 +258,11 @@ export function Update() {
 
           <div class="row-actions">
             {phase === 'uploading' ? (
-              <Button variant="danger-ghost" onClick={() => upload.current && upload.current.abort()}>
+              <Button
+                variant="danger-ghost"
+                disabled={progress.stage === 'finishing'}
+                onClick={() => upload.current && upload.current.abort()}
+              >
                 {t('common.cancel')}
               </Button>
             ) : (

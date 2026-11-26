@@ -83,6 +83,7 @@ class Portal {
   bool useMultipart_;
   unsigned authFails_;
   uint32_t lockUntilS_;
+  char chunkData_[1923];  // form-decoded base64, then decoded in place
   char out_[16384];
 };
 

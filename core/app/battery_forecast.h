@@ -4,6 +4,11 @@
 #include <stddef.h>
 #include <stdint.h>
 namespace gm {
+// Light-load LiPo SoC, rounded to integer percent; -1 = unknown voltage.
+int batteryPercent(int mv);
+// Runtime in hundredths of a day; -1 = unknown consumption/voltage.
+int32_t batteryRuntimeCentiDays(int mv, uint32_t capacityMah,
+                                int32_t mahPerDayCenti);
 struct BatterySample {
   uint32_t epoch;
   uint32_t batteryMv;

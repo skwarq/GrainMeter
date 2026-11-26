@@ -1,0 +1,79 @@
+.remote-connection {
+  max-width: 60rem;
+  margin: 0.5rem auto;
+  padding: 0.8rem 1rem;
+}
+.remote-connection form {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.remote-connection label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.remote-connection label:has(input[type='checkbox']) {
+  flex-direction: row;
+  align-items: center;
+}
+.remote-session .row-actions {
+  align-items: end;
+}
+.remote-session label {
+  display: grid;
+  gap: 0.4rem;
+}
+.remote-session input {
+  width: 6rem;
+}
+.remote-logs {
+  max-width: 60rem;
+  margin: 1rem auto;
+  padding: 1.5rem;
+}
+.remote-logs summary {
+  cursor: pointer;
+  font-weight: bold;
+}
+.remote-logs fieldset {
+  display: flex;
+  gap: 1rem;
+}
+.remote-logs label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.remote-logs pre {
+  max-height: 24rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.remote-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+}
+.remote-head h1 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+.remote-head button:first-of-type {
+  margin-left: auto;
+}
+.remote-connection > form,
+.remote-connection > .remote-session {
+  margin-top: 0.8rem;
+}
+.remote-session {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+}
+.remote-session p {
+  margin: 0;
+}

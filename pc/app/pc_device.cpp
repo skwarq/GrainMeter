@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <new>
 #include <random>
 
 #include "util/log.h"
@@ -90,6 +91,7 @@ bool PcDevice::start(std::string* error) {
   ports.sys = this;
   ports.ota = &ota_;
   ports.history = &history_;
+  ports.remote = this;
   gm::ConfigLimits limits;
   limits.minMeasureS = 5;
   limits.allowInsecureUrl = true;
@@ -106,11 +108,91 @@ uint32_t PcDevice::tick() {
     restart("software restart");
   }
   std::lock_guard<std::mutex> lock(mu_);
+  if (logs_ && std::chrono::steady_clock::now() - logReadAt_ >=
+                   std::chrono::minutes(5)) {
+    logLast_ = logs_->last();
+    logs_.reset();
+  }
+  app_->otaUpload().tick();
   if (app_->ota().busy()) {
     return 1;  // never "sleep" while an update is being written
   }
   app_->runWifiJoin();
-  return app_->runDue(true);
+  pollRemote();
+  const uint32_t next = app_->runDue(!remoteActive_);
+  uint32_t minutes;
+  if (!remoteActive_ && app_->config().remoteUrl[0] &&
+      app_->takeRemoteRequest(&minutes)) {
+    remoteActive_ = true;
+    remoteAccounted_ = remoteLastValid_ = clock_.monoS();
+    remoteUntil_ = remoteAccounted_ + minutes * 60;
+  }
+  return remoteActive_ ? 1 : next;
+}
+
+bool PcDevice::read(uint64_t since, char* out, size_t cap) {
+  if (!logs_) logs_.reset(new (std::nothrow) gm::LogBuffer(logLast_));
+  if (!logs_) return false;
+  logReadAt_ = std::chrono::steady_clock::now();
+  char line[128];
+  const int n = snprintf(
+      line, sizeof(line), "I (%u) pc: simulated log preview, network=%s\n",
+      static_cast<unsigned>(clock_.monoS()), net_.stateText());
+  if (n > 0) logs_->append(line, strlen(line));
+  return logs_->read(since, out, cap);
+}
+
+void PcDevice::accountRemote() {
+  if (!remoteActive_) return;
+  uint32_t end = clock_.monoS();
+  const uint32_t idle = remoteLastValid_ + app_->config().remoteIdleMin * 60;
+  if (end > remoteUntil_) end = remoteUntil_;
+  if (end > idle) end = idle;
+  if (end > remoteAccounted_) {
+    const uint32_t elapsed = end - remoteAccounted_;
+    const uint32_t left = app_->remoteBudgetLeftS();
+    app_->remoteSessionUsed(elapsed > left ? left : elapsed);
+    remoteAccounted_ = end;
+  }
+}
+
+void PcDevice::pollRemote() {
+  accountRemote();
+  if (remoteActive_ &&
+      (clock_.monoS() >= remoteUntil_ ||
+       clock_.monoS() - remoteLastValid_ >= app_->config().remoteIdleMin * 60 ||
+       !app_->remoteBudgetLeftS() || !app_->config().remoteUrl[0] ||
+       gm::powerModeFor(batteryMv(), app_->config()) ==
+           gm::PowerMode::Critical))
+    remoteActive_ = false;
+}
+
+void PcDevice::validRequest() {
+  accountRemote();
+  if (remoteActive_) remoteLastValid_ = clock_.monoS();
+}
+
+gm::RemoteSessionInfo PcDevice::info() {
+  accountRemote();
+  gm::RemoteSessionInfo out;
+  const uint32_t now = clock_.monoS();
+  out.remainingS = remoteActive_ && remoteUntil_ > now ? remoteUntil_ - now : 0;
+  out.budgetLeftS = app_->remoteBudgetLeftS();
+  return out;
+}
+
+gm::RemoteExtendResult PcDevice::extend(uint32_t minutes,
+                                        gm::RemoteSessionInfo* out) {
+  if (!remoteActive_) return gm::RemoteExtendResult::NoSession;
+  accountRemote();
+  const uint32_t now = clock_.monoS();
+  out->budgetLeftS = app_->remoteBudgetLeftS();
+  if (!out->budgetLeftS) return gm::RemoteExtendResult::Budget;
+  out->remainingS = gm::remoteExtendedRemaining(
+      remoteUntil_ > now ? remoteUntil_ - now : 0, minutes, out->budgetLeftS);
+  remoteUntil_ = now + out->remainingS;
+  remoteLastValid_ = now;
+  return gm::RemoteExtendResult::Ok;
 }
 
 void PcDevice::restart(const char* reason) {
@@ -121,6 +203,14 @@ void PcDevice::restart(const char* reason) {
           ? app_->ota().image().version
           : "";
   const bool newImage = ota_.restart(pendingVersion);
+  if (newImage) runningVersion_ = pendingVersion;
+  if (!remoteOpMid_.empty()) {
+    remoteOpOk_ =
+        !remoteOpTarget_.empty() && runningVersion_ == remoteOpTarget_;
+    remoteOpReported_ = true;
+  }
+  const bool resumeRemote = tunnel_ != nullptr;
+  tunnel_.reset();
   resetReason_ = reason;
   wakeReason_ = newImage ? "software restart (OTA)" : reason;
   GM_LOGI(kTag, "simulated restart: %s, running %s", reason,
@@ -131,6 +221,95 @@ void PcDevice::restart(const char* reason) {
                                 "mock://thingspeak"));
   portal_.reset(new gm::Portal(*app_));
   app_->begin();
+  if (resumeRemote) {
+    std::random_device random;
+    char nonce[33];
+    for (unsigned i = 0; i < 4; ++i) {
+      std::snprintf(nonce + i * 8, 9, "%08x", static_cast<unsigned>(random()));
+    }
+    remoteNonce_ = nonce;
+    tunnel_.reset(new gm::PortalTunnel(*portal_, *app_));
+    tunnel_->beginSession(remoteNonce_.c_str(), remoteId_.c_str());
+  }
+}
+
+void PcDevice::beginRemoteSession(const char* nonce, const char* id) {
+  std::lock_guard<std::mutex> lock(mu_);
+  remoteNonce_ = nonce;
+  remoteId_ = id;
+  remoteOpMid_.clear();
+  remoteOpTarget_.clear();
+  remoteOpReported_ = false;
+  tunnel_.reset(new gm::PortalTunnel(*portal_, *app_));
+  tunnel_->beginSession(nonce, id);
+}
+
+bool PcDevice::handleTunnel(const char* mid, const std::string& payload,
+                            bool retained, gm::TunnelOut* out,
+                            std::string* bodyCopy) {
+  std::lock_guard<std::mutex> lock(mu_);
+  if (!tunnel_) {
+    GM_LOGE(kTag, "tunnel request without a remote session");
+    return false;
+  }
+  if (!tunnel_->handle(mid, payload.data(), payload.size(), retained,
+                       clock_.monoS(), out)) {
+    return false;
+  }
+  bodyCopy->assign(out->payload, out->len);
+  out->payload = bodyCopy->c_str();
+  if (out->restart) {
+    remoteOpReported_ = false;
+    remoteOpMid_ = mid;
+    remoteOpTarget_ = app_->ota().state() == gm::OtaSession::State::Done
+                          ? app_->ota().image().version
+                          : runningVersion_;
+    restartPending_ = true;
+  }
+  return true;
+}
+
+std::string PcDevice::remoteStatus() {
+  std::lock_guard<std::mutex> lock(mu_);
+  char status[1024], mac[65] = "";
+  const gm::RemoteSessionInfo info = this->info();
+  const char* opMid = remoteOpReported_ ? remoteOpMid_.c_str() : "";
+  const char* opFw = remoteOpReported_ ? runningVersion_.c_str() : "";
+  const char* opResult =
+      remoteOpReported_ ? (remoteOpOk_ ? "ok" : "failed") : "";
+  if (tunnel_) {
+    tunnel_->refreshKeys();
+    tunnel_->statusMac(runningVersion_.c_str(), app_->config().deviceName, 0,
+                       info.remainingS, info.budgetLeftS, opMid, opFw, opResult,
+                       mac);
+  }
+  gm::JsonWriter w(status, sizeof(status));
+  w.beginObject()
+      .kvu("v", 2)
+      .kv("state", tunnel_ ? "online" : "offline")
+      .kv("nonce", remoteNonce_.c_str())
+      .kv("fw", runningVersion_.c_str())
+      .kv("name", app_->config().deviceName)
+      .kvu("until", 0)
+      .kvu("remaining_s", info.remainingS)
+      .kvu("budget_left_s", info.budgetLeftS)
+      .kvu("kdf_iter", gm::PortalTunnel::kdfIterations())
+      .key("op");
+  if (!remoteOpReported_) {
+    w.null();
+  } else {
+    w.beginObject()
+        .kv("mid", remoteOpMid_.c_str())
+        .kv("fw", runningVersion_.c_str())
+        .kv("result", remoteOpOk_ ? "ok" : "failed")
+        .endObject();
+  }
+  w.kv("mac", mac).endObject();
+  if (!w.ok()) {
+    GM_LOGE(kTag, "gm2 status exceeds buffer");
+    return "";
+  }
+  return status;
 }
 
 static void copyReply(gm::PortalReply* reply, std::string* body) {
@@ -209,6 +388,7 @@ void PcDevice::writePlatformJson(gm::JsonWriter& w, bool detailed) {
       .kvb("network_up", net_.up())
       .kvb("lost_response", http_.lostResponse())
       .kvu("http_posts", http_.postCount())
+      .kvu("talkback_calls", http_.talkbackCount())
       .kvu("mock_entries_main", mock_.entries(app_->config().channelId).size())
       .kvu("mock_entries_diag",
            mock_.entries(app_->config().diagChannelId).size())
@@ -249,6 +429,12 @@ bool PcDevice::platformAction(const char* action, const gm::Form& args,
     return true;
   }
   if (std::strcmp(action, "exit_service") == 0) {
+    if (remoteActive_) {
+      accountRemote();
+      remoteActive_ = false;
+      std::snprintf(msg, cap, "remote session ended");
+      return true;
+    }
     std::snprintf(
         msg, cap,
         "PC simulator: portal is always available (no SoftAP/deep sleep)");
@@ -270,7 +456,32 @@ bool PcDevice::simAction(const gm::Form& f, char* msg, size_t cap) {
   f.getInt("sensor", 1, 16, &point);  // index on the simulated probe
   const bool on = std::strcmp(arg, "on") == 0 || std::strcmp(arg, "down") == 0;
 
-  if (std::strcmp(action, "crc") == 0) {
+  if (std::strcmp(action, "remote_start") == 0) {
+    long minutes = 0;
+    if (!f.getInt("minutes", 1, 60, &minutes) || !app_->config().remoteUrl[0] ||
+        !app_->remoteBudgetLeftS() ||
+        gm::powerModeFor(batteryMv(), app_->config()) ==
+            gm::PowerMode::Critical) {
+      std::snprintf(msg, cap, "remote_start: unavailable or minutes not 1..60");
+      return false;
+    }
+    if (!remoteActive_) {
+      remoteActive_ = true;
+      remoteAccounted_ = remoteLastValid_ = clock_.monoS();
+      remoteUntil_ = remoteAccounted_ + gm::remoteExtendedRemaining(
+                                            0, static_cast<uint32_t>(minutes),
+                                            app_->remoteBudgetLeftS());
+    }
+    std::snprintf(msg, cap, "remote session started");
+  } else if (std::strcmp(action, "talkback") == 0) {
+    char command[128];
+    if (!f.get("cmd", command, sizeof(command))) {
+      std::snprintf(msg, cap, "talkback: cmd required (max 127 bytes)");
+      return false;
+    }
+    http_.queueTalkback(command);
+    std::snprintf(msg, cap, "TalkBack command queued");
+  } else if (std::strcmp(action, "crc") == 0) {
     long count = 1;
     f.getInt("count", -1, 1000, &count);
     if (!probe_.injectCrc(static_cast<int>(point), static_cast<int>(count))) {

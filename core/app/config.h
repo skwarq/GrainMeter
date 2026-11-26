@@ -40,6 +40,7 @@ struct Config {
   // Battery protection thresholds in mV (0 = disabled), see powerModeFor().
   uint32_t battLowMv;
   uint32_t battCritMv;
+  uint32_t battCapacityMah;
   // Remote update manifest (https://..., empty = off), checked every N h.
   char updateUrl[160];
   uint32_t updateCheckH;
@@ -48,9 +49,10 @@ struct Config {
   char gateway[16];
   char netmask[16];
   char dns[16];
-  // Log forwarding over UDP (like WIFI_RS), only while the station link is
-  // up. logHost empty = broadcast on the local network.
-  uint32_t logUdp;    // 0 off, 1 on
+  // Remote logs: UDP while Wi-Fi is up, MQTT only during a remote session.
+  // logHost empty = broadcast on the local network.
+  uint32_t logUdp;    // legacy key: 0 off, 1 on (both destinations)
+  uint32_t logDest;   // 0 UDP, 1 MQTT; API/form: "udp" / "mqtt"
   uint32_t logLevel;  // 1 error, 2 warning, 3 info, 4 debug
   char logHost[16];
   uint32_t logPort;
@@ -58,6 +60,14 @@ struct Config {
   // briefly for the PC script (tools/lan_console.py); while it stays
   // connected the device does not sleep. 0 off, 1 on.
   uint32_t lanWake;
+  char remoteUrl[97];
+  char remoteUser[65];
+  char remotePass[65];  // secret
+  char remoteId[25];
+  uint32_t talkbackId;
+  char talkbackKey[33];  // secret
+  uint32_t remoteBudgetMin;
+  uint32_t remoteIdleMin;
   // Service mode: SoftAP + captive portal (0 = never, USB/LAN console and
   // the portal over the station link only). With Wi-Fi configured the
   // station is tried first and the SoftAP starts after apDelayS without a

@@ -11,6 +11,31 @@
 
 namespace gm {
 
+struct RemoteSessionInfo {
+  uint32_t remainingS = 0;
+  uint32_t budgetLeftS = 0;
+};
+
+enum class RemoteExtendResult { Ok, NoSession, Budget };
+
+// Calls are serialized with the application lock, including budget accounting.
+class RemoteSessionPort {
+ public:
+  virtual ~RemoteSessionPort() {}
+  virtual bool active() = 0;
+  virtual RemoteSessionInfo info() = 0;
+  virtual void validRequest() = 0;
+  virtual RemoteExtendResult extend(uint32_t minutes,
+                                    RemoteSessionInfo* out) = 0;
+};
+
+inline uint32_t remoteExtendedRemaining(uint32_t remaining, uint32_t minutes,
+                                        uint32_t budgetLeft) {
+  uint32_t seconds = remaining + minutes * 60;
+  if (seconds > 3600) seconds = 3600;
+  return seconds > budgetLeft ? budgetLeft : seconds;
+}
+
 // System/hardware boundary. Everything below is implemented twice:
 // firmware/main (ESP-IDF) and pc/ (simulation). Shared logic only talks to
 // these interfaces.
@@ -21,9 +46,13 @@ class Clock {
   // Monotonic seconds since power-on; continues across deep sleep (RTC
   // timer on ESP32, simulated/accelerated on PC).
   virtual uint32_t monoS() = 0;
-  // UTC wall clock, valid only after SNTP (ESP32) or simulated sync (PC).
+  // UTC wall clock, valid after synchronization or checked RTC recovery.
   virtual bool wallValid() = 0;
   virtual uint32_t epoch() = 0;
+  // True for a checked recovery on this boot, not a network synchronization.
+  virtual bool wallRestored() { return false; }
+  // Refresh a platform's independent crash/restart snapshot, if supported.
+  virtual void checkpoint() {}
   // Sets the wall clock (HTTP Date correction). false = not supported.
   virtual bool setEpoch(uint32_t epoch) {
     (void)epoch;
@@ -101,11 +130,24 @@ class HttpClient {
   virtual void endSession() {}
 };
 
+class LogSource {
+ public:
+  virtual ~LogSource() {}
+  // Writes bounded JSON {next,lost,lines}. since = last delivered sequence,
+  // initially 0. false means unavailable/allocation failure or insufficient
+  // cap.
+  virtual bool read(uint64_t since, char* out, size_t cap) = 0;
+};
+
 class SystemPort {
  public:
   virtual ~SystemPort() {}
+  virtual LogSource* logSource() { return nullptr; }
   virtual const char* platformName() = 0;  // "esp32c6" / "pc-sim"
   virtual int batteryMv() = 0;             // -1 if not available
+  // Consumption from measured operating times, in 0.01 mAh/day.
+  // -1 when unavailable or less than one hour has been observed.
+  virtual int32_t batteryMahPerDayCenti() { return -1; }
   virtual const char* wakeReason() = 0;
   virtual const char* resetReason() = 0;
   virtual void requestRestart() = 0;  // performed after the reply

@@ -7,6 +7,7 @@ import { describeError } from '../lib/errors.js';
 import { formatDuration, formatRom, formatBytes, formatEpoch } from '../lib/format.js';
 import { formatTemp, pointState, tempColor, isTemp } from '../lib/temp.js';
 import { powerTone } from '../lib/power.js';
+import { PortalLogs } from '../components/PortalLogs.jsx';
 
 function yesNo(t, v, goodWhen = true) {
   const good = !!v === goodWhen;
@@ -364,6 +365,7 @@ export function Diagnostics() {
       )}
 
       <RawJson data={d} />
+      <PortalLogs />
     </div>
   );
 }
@@ -402,6 +404,11 @@ function EspDetails({ esp, onCleared }) {
             esp.udp_log && [
               t('diag.udpLog'),
               t('diag.udpLogCounts', { sent: esp.udp_log.sent, dropped: esp.udp_log.dropped }),
+            ],
+            esp.logs && [t('config.logMode'), esp.logs.log_dest.toUpperCase()],
+            esp.logs && [
+              t('diag.mqttLog'),
+              t('diag.udpLogCounts', { sent: esp.logs.mqtt_sent, dropped: esp.logs.mqtt_dropped }),
             ],
           ]}
         />

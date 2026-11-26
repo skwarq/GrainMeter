@@ -55,6 +55,13 @@ struct DiagValues {
   const char* status;  // short text (fw version, wake reason)
 };
 
+// Diagnostic status, max 255 bytes. Unknown mah/rt are omitted.
+// Returns false rather than publishing a truncated key/value.
+bool tsFormatDiagStatus(const char* firmware, const char* wake,
+                        const char* power, uint32_t capacityMah,
+                        int32_t mahPerDayCenti, int32_t runtimeCentiDays,
+                        char* out, size_t cap);
+
 bool tsBuildDiag(const DiagValues& d, const char* writeKey, uint32_t nowEpoch,
                  char* out, size_t cap);
 

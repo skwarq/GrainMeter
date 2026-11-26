@@ -4,7 +4,7 @@ import { I18nContext, tOr, useI18n } from '../components/i18n.js';
 import { Badge, Button, Card, KV, Loading, Logo } from '../components/ui.jsx';
 import { ALERT_DEFAULTS, AlertsCard, DeviceCharts, HistoryCard, PointTable } from '../components/History.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
-import { batteryPercent, batteryForecast, batteryForecastText } from '../lib/battery.js';
+import { batteryPercent, batteryForecast, batteryForecastText, batteryRuntimeText } from '../lib/battery.js';
 import { formatDuration } from '../lib/format.js';
 import { RANGES, alerts as findAlerts, gapThreshold, latestDiag, latestPoints } from '../lib/feed.js';
 import { powerTone } from '../lib/power.js';
@@ -173,6 +173,10 @@ export function App() {
             <Button small icon="config" onClick={() => setEditing(true)}>
               {t('dash.settings')}
             </Button>
+            {/* Service portal over MQTT (remote.html, published next to this page). */}
+            <a class="btn btn-sm btn-secondary" href="remote.html">
+              {t('dash.remote')} →
+            </a>
             <LangSwitch />
           </div>
         </header>
@@ -317,6 +321,7 @@ function DeviceCard({ diag, diagLast, error, t, now, range }) {
           ],
         ]}
       />
+      <p class="small">{batteryRuntimeText(d.batteryRuntime, t)}</p>
       <DeviceCharts
         feed={{
           entries: (diag ? diag.entries : []).map((e) => ({

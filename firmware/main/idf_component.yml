@@ -1,3 +1,4 @@
-# Only ESP-IDF itself; no registry components. Pinned to the CI image.
+# ESP-IDF itself plus esp-mqtt (moved out of IDF in v6). Pinned to the CI image.
 dependencies:
   idf: "6.1.1"
+  espressif/mqtt: "^1.0.0"

@@ -8,6 +8,7 @@
 #include "app/alarm.h"
 #include "app/battery_forecast.h"
 #include "app/notifications.h"
+#include "comm/talkback.h"
 #include "comm/thingspeak.h"
 #include "onewire/ds18b20.h"
 #include "ota/remote_update.h"
@@ -32,6 +33,7 @@ GrainMeter::GrainMeter(const Ports& ports, RetainedState* state,
       stateRecovered_(false),
       powerMode_(PowerMode::Normal),
       ota_(*ports.ota, kChipIdEsp32C6, "grainmeter"),
+      otaUpload_(ota_, *ports.clock),
       errorCount_(0),
       errorNext_(0) {
   memset(&scan_, 0, sizeof(scan_));
@@ -58,6 +60,11 @@ bool GrainMeter::begin() {
             "retained state invalid -> initialised (power-on or corruption)");
   }
   ++st_->wakeCount;
+  if (p_.clock->wallRestored()) {
+    // Persist the retry requirement even if we sleep before the next window.
+    st_->hasTimeSync = 0;
+    st_->timeSource = 0;
+  }
   if (static_cast<RemoteUpdateResult>(st_->updateResult) ==
           RemoteUpdateResult::Available &&
       compareVersions(st_->updateLatest, GM_FW_VERSION) <= 0) {
@@ -130,6 +137,7 @@ static void addReading(MeasureReport& m, const Rom& rom, uint8_t point) {
 }
 
 const MeasureReport& GrainMeter::measure(bool store) {
+  p_.clock->checkpoint();
   MeasureReport& m = meas_;
   memset(&m, 0, sizeof(m));
   scan();
@@ -365,7 +373,8 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
   }
   st_->seal();
 
-  if (!cfg_.uploadConfigured() && !notificationsConfigured(cfg_)) {
+  if (!cfg_.uploadConfigured() && !notificationsConfigured(cfg_) &&
+      !cfg_.talkbackId) {
     finishUpload(false, -1, "reporting not configured (channel / write key)");
     return L;
   }
@@ -390,12 +399,9 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
   // corrects it (adjustClock), SNTP runs only when the clock is unknown or
   // no sync succeeded for a day. A failed sync is fatal only if the clock
   // was never set.
-  bool timeOk = !timeSyncDue(p_.clock->monoS());
-  if (!timeOk) {
-    timeOk = p_.net->syncTime(kTimeSyncTimeoutMs);
-    if (timeOk) noteTimeSync(1);
-  }
+  const bool timeOk = synchronizeTime();
   if (!timeOk && !p_.clock->wallValid()) {
+    pollTalkback();
     p_.http->endSession();
     p_.net->disconnect();
     // A heartbeat window without samples has nothing to fail with.
@@ -467,6 +473,7 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
   } else {
     L.diagResult = DiagNotDue;
   }
+  pollTalkback();
   if (cfg_.remoteUpdateEnabled() && updateCheckDue(nowMono)) {
     checkRemoteUpdate(true, false, "");
   }
@@ -474,6 +481,147 @@ const LastUpload& GrainMeter::upload(bool alarmWindow) {
   p_.net->disconnect();
   finishUpload(mainOk, mainStatus, msg);
   return L;
+}
+
+void GrainMeter::refreshRemoteBudget() {
+  const bool utc = p_.clock->wallValid();
+  const uint32_t day = utc ? p_.clock->epoch() / 86400 : 0;
+  const uint32_t mono = p_.clock->monoS();
+  if (!st_->remoteBudgetStarted) return;
+  if (!utc && st_->remoteBudgetUtc) {
+    // Clock validity was lost: retain usage and start a conservative rolling
+    // window rather than granting another daily allowance immediately.
+    st_->remoteBudgetUtc = 0;
+    st_->remoteWindowMonoS = mono;
+  } else if (utc && !st_->remoteBudgetUtc) {
+    // Preserve usage when time first becomes known; next UTC midnight resets.
+    st_->remoteBudgetUtc = 1;
+    st_->remoteDay = day;
+  } else if ((utc && st_->remoteBudgetUtc && day > st_->remoteDay) ||
+             (!st_->remoteBudgetUtc &&
+              mono - st_->remoteWindowMonoS >= 86400)) {
+    st_->remoteUsedS = 0;
+    st_->remoteDay = day;
+    st_->remoteWindowMonoS = mono;
+  }
+  st_->seal();
+}
+
+uint32_t GrainMeter::remoteLeftS() {
+  refreshRemoteBudget();
+  const uint32_t max = cfg_.remoteBudgetMin * 60;
+  return st_->remoteUsedS >= max ? 0 : max - st_->remoteUsedS;
+}
+
+uint32_t GrainMeter::remotePendingMin() {
+  RemoteCommand c = {pendingRemoteMin_, pendingRemoteUntil_};
+  if (talkbackExpired(c, p_.clock->wallValid(), p_.clock->epoch()))
+    pendingRemoteMin_ = 0;
+  if (powerModeFor(p_.sys->batteryMv(), cfg_) == PowerMode::Critical) return 0;
+  const uint32_t left = remoteLeftS() / 60;
+  return pendingRemoteMin_ < left ? pendingRemoteMin_ : left;
+}
+
+bool GrainMeter::takeRemoteRequest(uint32_t* minutes) {
+  if (!minutes) return false;
+  *minutes = remotePendingMin();
+  pendingRemoteMin_ = 0;
+  return *minutes != 0;
+}
+
+void GrainMeter::remoteSessionUsed(uint32_t seconds) {
+  if (!seconds) return;
+  refreshRemoteBudget();
+  if (!st_->remoteBudgetStarted) {
+    st_->remoteBudgetStarted = 1;
+    st_->remoteBudgetUtc = p_.clock->wallValid();
+    st_->remoteDay = st_->remoteBudgetUtc ? p_.clock->epoch() / 86400 : 0;
+    st_->remoteWindowMonoS = p_.clock->monoS();
+  }
+  // Saturate without losing accounting if the configured budget changes.
+  st_->remoteUsedS = seconds > UINT32_MAX - st_->remoteUsedS
+                         ? UINT32_MAX
+                         : st_->remoteUsedS + seconds;
+  st_->seal();
+}
+
+void GrainMeter::pollTalkback() {
+  if (!cfg_.talkbackId ||
+      powerModeFor(p_.sys->batteryMv(), cfg_) == PowerMode::Critical)
+    return;
+  char command[128];
+  const char* base =
+      limits_.allowInsecureUrl && strncmp(cfg_.reportUrl, "mock://", 7) == 0
+          ? "mock://talkback"
+          : "https://api.thingspeak.com";
+  int status = -1;
+  const TalkbackResult r =
+      talkbackExecute(*p_.http, base, cfg_.talkbackId, cfg_.talkbackKey,
+                      command, sizeof(command), &status);
+  if (r == TalkbackResult::Failed) {
+    recordError("TalkBack request failed (%s%d)",
+                status < 0      ? "no connection "
+                : status != 200 ? "HTTP "
+                                : "bad response ",
+                status);
+    return;
+  }
+  if (r == TalkbackResult::Empty) return;
+  RemoteCommand c = {};
+  const bool valid = talkbackParseCommand(command, &c);
+  // A queued command is untrusted and may echo a credential: redact before
+  // keeping any diagnostic text, including malformed/unknown commands.
+  const char* secrets[] = {cfg_.talkbackKey, cfg_.remotePass, cfg_.writeKey,
+                           cfg_.servicePassword};
+  for (const char* secret : secrets) {
+    if (!*secret) continue;
+    char* search = command;
+    char* at;
+    while ((at = strstr(search, secret)) != nullptr) {
+      memset(at, '*', strlen(secret));
+      search = at + strlen(secret);
+    }
+  }
+  for (char* p = command; *p; ++p)
+    if (static_cast<unsigned char>(*p) < 32) *p = ' ';
+  snprintf(lastRemoteCmd_, sizeof(lastRemoteCmd_), "%s", command);
+  lastRemoteEpoch_ = p_.clock->wallValid() ? p_.clock->epoch() : 0;
+  lastRemoteMonoS_ = p_.clock->monoS();
+  if (!valid) {
+    recordError("TalkBack unknown: %.58s", command);
+    return;
+  }
+  if (talkbackExpired(c, p_.clock->wallValid(), p_.clock->epoch())) return;
+  pendingRemoteMin_ = c.minutes;
+  pendingRemoteUntil_ = c.validUntil;
+}
+
+void GrainMeter::writeRemote(JsonWriter& w) {
+  const uint32_t pending = remotePendingMin();
+  RemoteSessionInfo info;
+  if (p_.remote)
+    info = p_.remote->info();
+  else
+    info.budgetLeftS = remoteLeftS();
+  w.key("remote")
+      .beginObject()
+      .kvb("configured", cfg_.remoteUrl[0] != 0)
+      .kvb("talkback", cfg_.talkbackId != 0)
+      .kvu("budget_min", cfg_.remoteBudgetMin)
+      .kvu("budget_left_min", info.budgetLeftS / 60)
+      .kvu("budget_left_s", info.budgetLeftS)
+      .kvu("remaining_s", info.remainingS)
+      .kvu("until", info.remainingS && p_.clock->wallValid()
+                        ? p_.clock->epoch() + info.remainingS
+                        : 0)
+      .key("last_cmd")
+      .beginObject()
+      .kv("text", lastRemoteCmd_)
+      .kvu("epoch", lastRemoteEpoch_)
+      .kvu("mono_s", lastRemoteMonoS_)
+      .endObject()
+      .kvu("pending_min", pending)
+      .endObject();
 }
 
 bool GrainMeter::diagDue(uint32_t nowMono) const {
@@ -529,7 +677,20 @@ bool GrainMeter::timeSyncDue(uint32_t nowMono) const {
          nowMono - st_->lastTimeSyncMonoS >= kTimeSyncEveryS;
 }
 
+bool GrainMeter::synchronizeTime() {
+  if (!timeSyncDue(p_.clock->monoS())) return true;
+  if (p_.net->syncTime(kTimeSyncTimeoutMs) && p_.clock->wallValid()) {
+    noteTimeSync(1);
+    return true;
+  }
+  recordError("time sync failed%s", p_.clock->wallValid()
+                                        ? "; using retained clock"
+                                        : "; clock unknown");
+  return false;
+}
+
 void GrainMeter::noteTimeSync(uint8_t source) {
+  p_.clock->checkpoint();
   st_->hasTimeSync = 1;
   st_->timeSource = source;
   st_->lastTimeSyncMonoS = p_.clock->monoS();
@@ -569,7 +730,9 @@ void GrainMeter::writeClock(JsonWriter& w) {
   } else {
     w.key("sync_age_s").null();
   }
-  w.kv("last_fix_s", static_cast<int64_t>(st_->lastClockFixS)).endObject();
+  w.kv("last_fix_s", static_cast<int64_t>(st_->lastClockFixS))
+      .kvb("restored", p_.clock->wallRestored())
+      .endObject();
 }
 
 bool GrainMeter::updateCheckDue(uint32_t nowMono) const {
@@ -596,9 +759,17 @@ void GrainMeter::sendDiag(uint32_t nowEpoch, uint32_t nowMono, bool full) {
   d.dropped = st_->droppedOverflow + st_->droppedNoTime;
   d.uploadFailures = st_->uploadFailCount;
   d.wakeCount = st_->wakeCount;
-  char status[96];
-  snprintf(status, sizeof(status), "fw=%s wake=%s power=%s", GM_FW_VERSION,
-           p_.sys->wakeReason(), powerModeName(powerMode_));
+  char status[256];
+  const int32_t mah = p_.sys->batteryMahPerDayCenti();
+  if (!tsFormatDiagStatus(
+          GM_FW_VERSION, p_.sys->wakeReason(), powerModeName(powerMode_),
+          cfg_.battCapacityMah, mah,
+          batteryRuntimeCentiDays(d.batteryMv, cfg_.battCapacityMah, mah),
+          status, sizeof(status))) {
+    L.diagResult = DiagFailed;
+    recordError("diagnostic channel: status too large");
+    return;
+  }
   d.status = status;
   char url[160];
   size_t points = 0;
@@ -731,7 +902,7 @@ RemoteUpdateResult GrainMeter::remoteUpdateNow(bool install,
     return refuseManual(RemoteUpdateResult::Failed, msg);
   }
   if (!p_.clock->wallValid()) {
-    p_.net->syncTime(kTimeSyncTimeoutMs);  // certificate dates; not fatal
+    synchronizeTime();  // certificate dates; not fatal
   }
   manualCheck_ = true;
   manualCheckMonoS_ = p_.clock->monoS();
@@ -867,6 +1038,7 @@ void GrainMeter::checkRemoteUpdate(bool install, bool manual,
 }
 
 uint32_t GrainMeter::runDue(bool allowUpload) {
+  otaUpload_.tick();
   const PowerMode mode = powerModeFor(p_.sys->batteryMv(), cfg_);
   if (static_cast<uint8_t>(mode) != st_->alarm.powerMode) {
     st_->alarm.powerMode = static_cast<uint8_t>(mode);
@@ -1396,6 +1568,25 @@ void GrainMeter::writeStatus(JsonWriter& w) {
   } else {
     w.key("battery_mv").null();
   }
+  const int32_t mah = p_.sys->batteryMahPerDayCenti();
+  const int soc = batteryPercent(mv);
+  const int32_t days = batteryRuntimeCentiDays(mv, cfg_.battCapacityMah, mah);
+  w.key("battery_runtime").beginObject().key("mah_per_day");
+  if (mah < 0)
+    w.null();
+  else
+    w.centi(mah);
+  w.kvu("capacity_mah", cfg_.battCapacityMah).key("soc_pct");
+  if (soc < 0)
+    w.null();
+  else
+    w.num(soc);
+  w.key("days");
+  if (days < 0)
+    w.null();
+  else
+    w.centi(days);
+  w.endObject();
   w.key("wifi")
       .beginObject()
       .kv("state", p_.net->stateText())
@@ -1425,6 +1616,7 @@ void GrainMeter::writeStatus(JsonWriter& w) {
   writeErrors(w);
   w.key("history").beginObject().kvb("available", history_.available());
   w.endObject();
+  writeRemote(w);
   w.key("ota");
   ota_.writeJson(w);
   p_.sys->writePlatformJson(w, false);
@@ -1504,6 +1696,7 @@ void GrainMeter::writeDiag(JsonWriter& w) {
   writeErrors(w);
   w.key("history");
   writeHistoryInfo(w);
+  writeRemote(w);
   w.key("ota");
   ota_.writeJson(w);
   p_.sys->writePlatformJson(w, true);

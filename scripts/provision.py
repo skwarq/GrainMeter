@@ -23,10 +23,19 @@ import urllib.parse
 KEYS = [
     "svc_pass", "name", "wifi_ssid", "wifi_pass", "report_url", "ts_channel",
     "ts_key", "diag_channel", "diag_key", "upload_s", "measure_s",
-    "diag_every_h", "batt_low_mv", "batt_crit_mv", "update_url",
+    "diag_every_h", "batt_low_mv", "batt_crit_mv", "batt_capacity_mah", "update_url",
     "update_check_h", "gateway", "netmask", "dns", "static_ip",
+    "alarm_temp_c", "alarm_rise_c", "alarm_rise_h", "alarm_repeat_min",
+    "notify_ntfy_url", "notify_tg_token", "notify_tg_chat",
+    "log_udp", "log_dest", "log_level", "log_host", "log_port", "lan_wake", "ap_delay_s",
+    "remote_url", "remote_user", "remote_pass", "remote_id",
+    "talkback_id", "talkback_key", "remote_budget_min", "remote_idle_min",
 ]
-SECRET = {"svc_pass", "wifi_pass", "ts_key", "diag_key"}
+SECRET = {"svc_pass", "wifi_pass", "ts_key", "diag_key", "notify_tg_token",
+          "remote_pass", "talkback_key"}
+# Local-only keys (browser login for remote.html, used by scripts/remote_link.py
+# and tests); accepted in device.conf but never sent to the device.
+LOCAL_ONLY = {"web_url", "web_user", "web_pass"}
 REQUIRED = ["svc_pass", "wifi_ssid", "ts_channel", "ts_key"]
 PROMPT = "> "
 
@@ -52,6 +61,8 @@ def load_config(path: str) -> dict:
                 fail(f"{path}:{n}: expected key=value")
             key, value = line.split("=", 1)
             key, value = key.strip(), value.strip()
+            if key in LOCAL_ONLY:
+                continue
             if key not in KEYS:
                 fail(f"{path}:{n}: unknown key '{key}'")
             if value:
@@ -70,9 +81,15 @@ def validate(values: dict, require: bool) -> None:
     for k in ("ts_key", "diag_key"):
         if k in values and not re.fullmatch(r"[A-Za-z0-9]{8,32}", values[k]):
             fail(f"{k}: 8-32 letters/digits (Write API Key)")
-    for k in ("ts_channel", "diag_channel"):
+    if "talkback_key" in values and not re.fullmatch(r"[A-Za-z0-9]{8,32}", values["talkback_key"]):
+        fail("talkback_key: 8-32 letters/digits (TalkBack API Key)")
+    for k in ("ts_channel", "diag_channel", "talkback_id"):
         if k in values and not values[k].isdigit():
             fail(f"{k}: number (Channel ID)")
+    if "batt_capacity_mah" in values:
+        capacity = values["batt_capacity_mah"]
+        if not re.fullmatch(r"[0-9]+", capacity) or not 100 <= int(capacity) <= 20000:
+            fail("batt_capacity_mah: 100..20000 mAh")
     for k, v in values.items():
         if "\n" in v or "\r" in v or len(v) > 200:
             fail(f"{k}: invalid value")
@@ -221,6 +238,13 @@ def sim_escape(value: str) -> str:
 
 
 def provision_sim(args, values: dict) -> None:
+    stored = dict(values)
+    # NVS keys are limited to 15 characters; PC storage uses the same keys.
+    for long_key, store_key in (("batt_capacity_mah", "batt_capacity"),
+                                ("remote_budget_min", "remote_budget_m"),
+                                ("alarm_repeat_min", "alarm_repeat_m")):
+        if long_key in stored:
+            stored[store_key] = stored.pop(long_key)
     lines = []
     if os.path.exists(args.sim_conf):
         with open(args.sim_conf, encoding="utf-8") as f:
@@ -229,14 +253,17 @@ def provision_sim(args, values: dict) -> None:
     out = []
     for line in lines:
         key = line.split("=", 1)[0] if "=" in line and not line.startswith("#") else None
-        if key in values:
-            out.append(f"{key}={sim_escape(values[key])}")
+        if key in stored:
+            out.append(f"{key}={sim_escape(stored[key])}")
             done.add(key)
         else:
             out.append(line)
     for key in KEYS:
-        if key in values and key not in done:
-            out.append(f"{key}={sim_escape(values[key])}")
+        key = {"batt_capacity_mah": "batt_capacity",
+               "remote_budget_min": "remote_budget_m",
+               "alarm_repeat_min": "alarm_repeat_m"}.get(key, key)
+        if key in stored and key not in done:
+            out.append(f"{key}={sim_escape(stored[key])}")
     os.makedirs(os.path.dirname(os.path.abspath(args.sim_conf)), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(os.path.abspath(args.sim_conf)))
     with os.fdopen(fd, "w", encoding="utf-8") as f:

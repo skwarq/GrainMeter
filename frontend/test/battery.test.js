@@ -1,6 +1,48 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { batteryPercent, batteryLevel, batteryForecast } from '../src/lib/battery.js';
+import {
+  batteryPercent,
+  batteryLevel,
+  batteryForecast,
+  batteryRuntimeDays,
+  batteryRuntimeText,
+  LIPO_CURVE,
+} from '../src/lib/battery.js';
+import { readFileSync } from 'node:fs';
+import { translate } from '../src/i18n/translate.js';
+
+test('C++ and JS use identical SoC knots and integer interpolation', () => {
+  const cpp = readFileSync(new URL('../../core/app/battery_forecast.cpp', import.meta.url), 'utf8');
+  const table = /kLipoCurve\[\]\[2\]\s*=\s*\{([\s\S]*?)\};/.exec(cpp);
+  assert.ok(table);
+  const knots = [...table[1].matchAll(/\{(\d+),\s*(\d+)\}/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  assert.deepEqual(knots, LIPO_CURVE);
+  for (let mv = 3000; mv <= 4200; mv++) {
+    const i = knots.findIndex(([v]) => mv <= v);
+    if (i <= 0) continue;
+    const [v0, p0] = knots[i - 1],
+      [v1, p1] = knots[i];
+    const pct = p0 + Math.floor(((mv - v0) * (p1 - p0) * 2 + v1 - v0) / (2 * (v1 - v0)));
+    assert.equal(batteryPercent(mv), pct, `mV=${mv}`);
+  }
+});
+
+test('runtime calculation: capacity, empty battery and missing data', () => {
+  assert.equal(batteryRuntimeDays(3.5, 3840), 1250 / 3.5);
+  assert.equal(batteryRuntimeDays(3.5, 3840, 5000), 2500 / 3.5);
+  assert.equal(batteryRuntimeDays(3.5, 3000), 0);
+  for (const mah of [null, undefined, 0, -1, NaN, Infinity]) assert.equal(batteryRuntimeDays(mah, 3840), null);
+  assert.equal(batteryRuntimeDays(3.5, null), null);
+  assert.equal(batteryRuntimeDays(3.5, 3840, 99), null);
+  assert.equal(batteryRuntimeDays(3.5, 3840, 20001), null);
+  assert.equal(batteryRuntimeDays(3.5, 3840, 2500.5), null);
+  const t = (key, params) => translate('pl', key, params);
+  assert.equal(
+    batteryRuntimeText({ mah_per_day: 3.5, days: 357.14 }, t),
+    'Czas pracy: ~357 dni (zużycie 3.50 mAh/dobę)',
+  );
+  assert.equal(batteryRuntimeText({ mah_per_day: 3.5, days: null }, t), 'Czas pracy: zbieranie danych');
+});
 
 test('batteryPercent: bounds and interpolation', () => {
   assert.equal(batteryPercent(4200), 100);

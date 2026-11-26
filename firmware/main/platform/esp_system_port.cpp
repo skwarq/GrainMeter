@@ -19,6 +19,8 @@
 #include "platform/power_stats.h"
 #include "platform/wifi_link.h"
 #include "sdkconfig.h"
+#include "service/remote_session.h"
+#include "service/session_hold.h"
 #include "service/udp_log.h"
 
 static portMUX_TYPE s_nameMux = portMUX_INITIALIZER_UNLOCKED;
@@ -100,6 +102,10 @@ int EspSystemPort::batteryMv() {
   return batteryMv_;
 }
 
+int32_t EspSystemPort::batteryMahPerDayCenti() {
+  return powerStatsMahPerDayCenti();
+}
+
 static const char* otaStateName(esp_ota_img_states_t s) {
   switch (s) {
     case ESP_OTA_IMG_NEW:
@@ -141,6 +147,7 @@ void EspSystemPort::writePlatformJson(gm::JsonWriter& w, bool detailed) {
       .kv("service_wake_gpio",
           static_cast<int64_t>(CONFIG_GM_SERVICE_WAKE_GPIO))
       .kv("rejected_firmware", rejected_);
+  remoteWriteJson(w);
   if (detailed) {
     w.kvu("min_free_heap", esp_get_minimum_free_heap_size());
     w.kv("idf", esp_get_idf_version());
@@ -194,6 +201,12 @@ void EspSystemPort::writeDetails(gm::JsonWriter& w) {
       .beginObject()
       .kvu("sent", udpLogSent())
       .kvu("dropped", udpLogDropped())
+      .endObject();
+  w.key("logs")
+      .beginObject()
+      .kv("log_dest", logDestinationMqtt() ? "mqtt" : "udp")
+      .kvu("mqtt_sent", mqttLogSent())
+      .kvu("mqtt_dropped", mqttLogDropped())
       .endObject();
 #if CONFIG_FREERTOS_USE_TRACE_FACILITY
   static TaskStatus_t tasks[32];
@@ -259,9 +272,11 @@ bool EspSystemPort::boardTempCenti(int16_t* out) {
   return true;
 }
 
+gm::LogSource* EspSystemPort::logSource() { return logPreviewSource(); }
+
 void EspSystemPort::configApplied(const gm::Config& cfg) {
   udpLogApply(cfg.logUdp != 0, cfg.logLevel, cfg.logHost,
-              static_cast<uint16_t>(cfg.logPort), apSsid);
+              static_cast<uint16_t>(cfg.logPort), apSsid, cfg.logDest == 1);
   lanWake = cfg.lanWake != 0;
   portENTER_CRITICAL(&s_nameMux);
   snprintf(deviceName, sizeof(deviceName), "%s", cfg.deviceName);
@@ -277,11 +292,12 @@ void EspSystemPort::copyDeviceName(char* out, size_t cap) {
 bool EspSystemPort::platformAction(const char* action, const gm::Form& args,
                                    char* msg, size_t cap) {
   if (std::strcmp(action, "exit_service") == 0) {
-    if (!serviceMode) {
+    if (!serviceMode && !holdActive(HoldOwner::Remote)) {
       snprintf(msg, cap, "not in service mode");
       return false;
     }
     exitService = true;
+    remoteStop();
     snprintf(msg, cap,
              "leaving service mode; normal measurement cycle resumes");
     return true;

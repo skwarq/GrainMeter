@@ -11,6 +11,7 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "platform/power_stats.h"
+#include "service/session_hold.h"
 
 static const char* kTag = "wifi";
 static const EventBits_t kGotIp = BIT0;
@@ -233,10 +234,10 @@ void WifiLink::dropStation() {
 }
 
 void WifiLink::disconnect() {
-  if (!keepSta_ && connected_ && dropHook_ != nullptr) {
+  if (connected_ && dropHook_ != nullptr) {
     dropHook_();
   }
-  if (keepSta_ && connected_) {
+  if ((keepSta_ || holdActive()) && connected_) {
     return;  // LAN portal keeps using the link
   }
   dropStation();
@@ -244,7 +245,7 @@ void WifiLink::disconnect() {
 
 void WifiLink::setKeepStation(bool keep) {
   keepSta_ = keep;
-  if (!keep) {
+  if (!keep && !holdActive()) {
     dropStation();
   }
 }

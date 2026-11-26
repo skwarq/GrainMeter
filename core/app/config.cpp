@@ -37,11 +37,15 @@ void configDefaults(Config* cfg, const char* defaultReportUrl,
   // radio before Wi-Fi current peaks can brown the board out in the cold.
   cfg->battLowMv = 3650;   // economy mode
   cfg->battCritMv = 3500;  // measure only, no radio
+  cfg->battCapacityMah = 2500;
   cfg->updateCheckH = 24;
   cfg->logUdp = 0;
+  cfg->logDest = 0;
   cfg->logLevel = 3;
   cfg->logPort = 5514;
   cfg->lanWake = 1;
+  cfg->remoteBudgetMin = 60;
+  cfg->remoteIdleMin = 10;
   cfg->apEnabled = 1;
   cfg->apDelayS = 60;
   cfg->alarmRiseH = 24;
@@ -92,6 +96,43 @@ static bool validUrl(const char* s, bool allowInsecure, size_t maxLen = 95) {
   }
   return allowInsecure &&
          (strncmp(s, "http://", 7) == 0 || strncmp(s, "mock://", 7) == 0);
+}
+
+static bool validRemoteId(const char* s) {
+  if (strlen(s) > 24) return false;
+  for (; *s; ++s) {
+    if (!((*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') || *s == '-'))
+      return false;
+  }
+  return true;
+}
+
+static bool validRemoteUrl(const char* s) {
+  if (!*s) return true;
+  if (!validText(s, 9, 96, false) || strncmp(s, "mqtts://", 8) != 0)
+    return false;
+  const char* host = s + 8;
+  const char* port = strchr(host, ':');
+  const char* end = port ? port : host + strlen(host);
+  if (host == end || *host == '.' || *host == '-' || end[-1] == '.' ||
+      end[-1] == '-')
+    return false;
+  for (const char* p = host; p < end; ++p) {
+    if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+          (*p >= '0' && *p <= '9') || *p == '.' || *p == '-'))
+      return false;
+  }
+  if (port) {
+    uint32_t n = 0;
+    if (!*++port) return false;
+    for (; *port; ++port) {
+      if (*port < '0' || *port > '9') return false;
+      n = n * 10 + static_cast<unsigned>(*port - '0');
+      if (n > 65535) return false;
+    }
+    if (!n) return false;
+  }
+  return true;
 }
 
 // A topic URL has one path component; JSON publishing goes to the origin.
@@ -171,12 +212,15 @@ static bool parseU32(const char* s, uint32_t lo, uint32_t hi, uint32_t* out) {
   if (s[0] == '\0') {
     return false;
   }
-  char* end = nullptr;
-  const unsigned long v = strtoul(s, &end, 10);
-  if (*end != '\0' || s[0] == '-' || v < lo || v > hi) {
-    return false;
+  uint32_t value = 0;
+  for (const char* p = s; *p; ++p) {
+    if (*p < '0' || *p > '9') return false;
+    const uint32_t digit = static_cast<uint32_t>(*p - '0');
+    if (value > (UINT32_MAX - digit) / 10) return false;
+    value = value * 10 + digit;
   }
-  *out = static_cast<uint32_t>(v);
+  if (value < lo || value > hi) return false;
+  *out = value;
   return true;
 }
 
@@ -242,6 +286,31 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
     }
     copyStr(next.reportUrl, sizeof(next.reportUrl), v);
   }
+  const struct {
+    const char* key;
+    char* dst;
+    size_t cap;
+    bool secret;
+    int kind;
+  } remote[] = {
+      {"remote_url", next.remoteUrl, sizeof(next.remoteUrl), false, 1},
+      {"remote_user", next.remoteUser, sizeof(next.remoteUser), false, 0},
+      {"remote_pass", next.remotePass, sizeof(next.remotePass), true, 0},
+      {"remote_id", next.remoteId, sizeof(next.remoteId), false, 2},
+      {"talkback_key", next.talkbackKey, sizeof(next.talkbackKey), true, 0},
+  };
+  for (const auto& f : remote) {
+    if (!form.has(f.key)) continue;
+    if (!form.get(f.key, v, sizeof(v)) || !validText(v, 0, f.cap - 1, true) ||
+        (f.kind == 1 && !validRemoteUrl(v)) ||
+        (f.kind == 2 && !validRemoteId(v))) {
+      setErr(err, errCap, "remote configuration: invalid value");
+      return false;
+    }
+    if (!f.secret || *v) copyStr(f.dst, f.cap, v);
+  }
+  if (form.has("remote_pass_clear")) next.remotePass[0] = 0;
+  if (form.has("talkback_key_clear")) next.talkbackKey[0] = 0;
   struct U32Field {
     const char* name;
     uint32_t* dst;
@@ -323,11 +392,17 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
        "batt_low_mv: 0 (off) or 2500..4500"},
       {"batt_crit_mv", &next.battCritMv, 0, 4500,
        "batt_crit_mv: 0 (off) or 2500..4500"},
+      {"batt_capacity_mah", &next.battCapacityMah, 100, 20000,
+       "batt_capacity_mah: 100..20000"},
       {"update_check_h", &next.updateCheckH, 0, 720, "update_check_h: 0..720"},
       {"log_udp", &next.logUdp, 0, 1, "log_udp: 0 or 1"},
       {"log_level", &next.logLevel, 1, 4,
        "log_level: 1 error, 2 warning, 3 info, 4 debug"},
       {"log_port", &next.logPort, 1, 65535, "log_port: 1..65535"},
+      {"talkback_id", &next.talkbackId, 0, UINT32_MAX, "talkback_id: uint32"},
+      {"remote_budget_min", &next.remoteBudgetMin, 0, 1440,
+       "remote_budget_min: 0..1440"},
+      {"remote_idle_min", &next.remoteIdleMin, 1, 60, "remote_idle_min: 1..60"},
       {"lan_wake", &next.lanWake, 0, 1, "lan_wake: 0 or 1"},
       {"ap_enabled", &next.apEnabled, 0, 1, "ap_enabled: 0 or 1"},
       {"ap_delay_s", &next.apDelayS, 0, 3600, "ap_delay_s: 0..3600"},
@@ -422,6 +497,14 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
     }
     copyStr(next.notifyTgChat, sizeof(next.notifyTgChat), v);
   }
+  if (form.has("log_dest")) {
+    if (!form.get("log_dest", v, sizeof(v)) ||
+        (strcmp(v, "udp") != 0 && strcmp(v, "mqtt") != 0)) {
+      setErr(err, errCap, "log_dest: udp or mqtt");
+      return false;
+    }
+    next.logDest = strcmp(v, "mqtt") == 0 ? 1 : 0;
+  }
   if (form.has("log_host")) {
     if (!form.get("log_host", v, sizeof(v)) || strlen(v) > 15 ||
         !validIpOrEmpty(v)) {
@@ -460,6 +543,11 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
                // 7 token
   };
   const TextKey texts[] = {
+      {"remote_url", cfg->remoteUrl, sizeof(cfg->remoteUrl), 8},
+      {"remote_user", cfg->remoteUser, sizeof(cfg->remoteUser), 0},
+      {"remote_pass", cfg->remotePass, sizeof(cfg->remotePass), 1},
+      {"remote_id", cfg->remoteId, sizeof(cfg->remoteId), 9},
+      {"talkback_key", cfg->talkbackKey, sizeof(cfg->talkbackKey), 1},
       {"notify_ntfy_url", cfg->notifyNtfyUrl, sizeof(cfg->notifyNtfyUrl), 6},
       {"notify_tg_token", cfg->notifyTgToken, sizeof(cfg->notifyTgToken), 7},
       {"notify_tg_chat", cfg->notifyTgChat, sizeof(cfg->notifyTgChat), 0},
@@ -483,6 +571,12 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
     }
     bool valid;
     switch (texts[i].kind) {
+      case 8:
+        valid = validRemoteUrl(v);
+        break;
+      case 9:
+        valid = validRemoteId(v);
+        break;
       case 6:
         valid = validNtfy(v, true);
         break;
@@ -528,10 +622,15 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
       {"diag_every_h", &cfg->diagEveryH, 0, 168},
       {"batt_low_mv", &cfg->battLowMv, 0, 4500},
       {"batt_crit_mv", &cfg->battCritMv, 0, 4500},
+      {"batt_capacity", &cfg->battCapacityMah, 100, 20000},
       {"update_check_h", &cfg->updateCheckH, 0, 720},
       {"log_udp", &cfg->logUdp, 0, 1},
+      {"log_dest", &cfg->logDest, 0, 1},
       {"log_level", &cfg->logLevel, 1, 4},
       {"log_port", &cfg->logPort, 1, 65535},
+      {"talkback_id", &cfg->talkbackId, 0, UINT32_MAX},
+      {"remote_budget_m", &cfg->remoteBudgetMin, 0, 1440},
+      {"remote_idle_min", &cfg->remoteIdleMin, 1, 60},
       {"lan_wake", &cfg->lanWake, 0, 1},
       {"ap_enabled", &cfg->apEnabled, 0, 1},
       {"ap_delay_s", &cfg->apDelayS, 0, 3600},
@@ -602,13 +701,20 @@ bool configSave(KeyValueStore& store, const Config& cfg) {
   const struct {
     const char* key;
     uint32_t value;
-  } nums[] = {
-      {"alarm_rise_h", cfg.alarmRiseH}, {"alarm_repeat_m", cfg.alarmRepeatMin},
-      {"diag_every_h", cfg.diagEveryH}, {"batt_low_mv", cfg.battLowMv},
-      {"batt_crit_mv", cfg.battCritMv}, {"update_check_h", cfg.updateCheckH},
-      {"log_udp", cfg.logUdp},          {"log_level", cfg.logLevel},
-      {"log_port", cfg.logPort},        {"lan_wake", cfg.lanWake},
-      {"ap_enabled", cfg.apEnabled},    {"ap_delay_s", cfg.apDelayS}};
+  } nums[] = {{"alarm_rise_h", cfg.alarmRiseH},
+              {"alarm_repeat_m", cfg.alarmRepeatMin},
+              {"diag_every_h", cfg.diagEveryH},
+              {"batt_low_mv", cfg.battLowMv},
+              {"batt_crit_mv", cfg.battCritMv},
+              {"update_check_h", cfg.updateCheckH},
+              {"batt_capacity", cfg.battCapacityMah},
+              {"log_udp", cfg.logUdp},
+              {"log_dest", cfg.logDest},
+              {"log_level", cfg.logLevel},
+              {"log_port", cfg.logPort},
+              {"lan_wake", cfg.lanWake},
+              {"ap_enabled", cfg.apEnabled},
+              {"ap_delay_s", cfg.apDelayS}};
   for (size_t i = 0; i < sizeof(nums) / sizeof(nums[0]); ++i) {
     snprintf(num, sizeof(num), "%lu",
              static_cast<unsigned long>(nums[i].value));
@@ -620,6 +726,19 @@ bool configSave(KeyValueStore& store, const Config& cfg) {
   ok = store.set("netmask", cfg.netmask) && ok;
   ok = store.set("dns", cfg.dns) && ok;
   ok = store.set("log_host", cfg.logHost) && ok;
+  ok = store.set("remote_url", cfg.remoteUrl) && ok;
+  ok = store.set("remote_user", cfg.remoteUser) && ok;
+  ok = store.set("remote_pass", cfg.remotePass) && ok;
+  ok = store.set("remote_id", cfg.remoteId) && ok;
+  ok = store.set("talkback_key", cfg.talkbackKey) && ok;
+  snprintf(num, sizeof(num), "%lu", static_cast<unsigned long>(cfg.talkbackId));
+  ok = store.set("talkback_id", num) && ok;
+  snprintf(num, sizeof(num), "%lu",
+           static_cast<unsigned long>(cfg.remoteBudgetMin));
+  ok = store.set("remote_budget_m", num) && ok;
+  snprintf(num, sizeof(num), "%lu",
+           static_cast<unsigned long>(cfg.remoteIdleMin));
+  ok = store.set("remote_idle_min", num) && ok;
   return store.commit() && ok;
 }
 
@@ -657,6 +776,7 @@ void configWriteJson(JsonWriter& w, const Config& cfg) {
       .kvu("diag_every_h", cfg.diagEveryH)
       .kvu("batt_low_mv", cfg.battLowMv)
       .kvu("batt_crit_mv", cfg.battCritMv)
+      .kvu("batt_capacity_mah", cfg.battCapacityMah)
       .kv("update_url", cfg.updateUrl)
       .kvu("update_check_h", cfg.updateCheckH)
       .kv("static_ip", cfg.staticIp)
@@ -664,9 +784,18 @@ void configWriteJson(JsonWriter& w, const Config& cfg) {
       .kv("netmask", cfg.netmask)
       .kv("dns", cfg.dns)
       .kvb("log_udp", cfg.logUdp != 0)
+      .kv("log_dest", cfg.logDest == 1 ? "mqtt" : "udp")
       .kvu("log_level", cfg.logLevel)
       .kv("log_host", cfg.logHost)
       .kvu("log_port", cfg.logPort)
+      .kv("remote_url", cfg.remoteUrl)
+      .kv("remote_user", cfg.remoteUser)
+      .kvb("remote_pass_set", cfg.remotePass[0] != 0)
+      .kv("remote_id", cfg.remoteId)
+      .kvu("talkback_id", cfg.talkbackId)
+      .kvb("talkback_key_set", cfg.talkbackKey[0] != 0)
+      .kvu("remote_budget_min", cfg.remoteBudgetMin)
+      .kvu("remote_idle_min", cfg.remoteIdleMin)
       .kvb("lan_wake", cfg.lanWake != 0)
       .kvb("ap_enabled", cfg.apEnabled != 0)
       .kvu("ap_delay_s", cfg.apDelayS)

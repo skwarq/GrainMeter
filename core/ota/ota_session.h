@@ -57,7 +57,7 @@ class OtaSession {
   const ImageInfo& image() const { return info_; }
   bool imageValid() const { return headerChecked_; }
 
-  void writeJson(JsonWriter& w) const;  // object
+  void writeJson(JsonWriter& w, size_t chunk = 0) const;  // object
   void reset();
 
  private:

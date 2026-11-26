@@ -71,6 +71,10 @@ class PcHttpClient : public gm::HttpClient {
   // Server stores the data but the reply never arrives (tests idempotence).
   void setLostResponse(bool on) { lostResponse_ = on; }
   bool lostResponse() const { return lostResponse_; }
+  void queueTalkback(const char* command) {
+    talkbackCommands_.push_back(command);
+  }
+  unsigned talkbackCount() const { return talkbackCalls_; }
   unsigned postCount() const { return posts_; }
   unsigned sessionCount() const { return sessions_; }
   std::string lastUrl();
@@ -88,6 +92,8 @@ class PcHttpClient : public gm::HttpClient {
   std::atomic<unsigned> sessions_;
   std::string lastUrl_;
   std::deque<std::string> notifications_;
+  std::deque<std::string> talkbackCommands_;
+  unsigned talkbackCalls_ = 0;
   SimClock* clock_ = nullptr;
 };
 

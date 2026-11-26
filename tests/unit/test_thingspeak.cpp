@@ -8,6 +8,30 @@
 #include "comm/thingspeak.h"
 #include "onewire/ds18b20.h"
 
+TEST(ThingSpeak, RuntimeStatusFormatAndLimit) {
+  char status[256];
+  ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 5000, 350, 71429,
+                                     status, sizeof(status)));
+  EXPECT_STREQ(
+      status,
+      "fw=1.0 wake=timer power=normal capacity=5000 mah=3.50 rt=714.29");
+  gm::DiagValues d = {-1, -61, 8, 1, 3, 0, 2, 17, status};
+  char out[2048];
+  ASSERT_TRUE(
+      gm::tsBuildDiag(d, "DIAGKEY000000001", 1700000000u, out, sizeof(out)));
+  EXPECT_NE(std::string(out).find(status), std::string::npos);
+  ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, -1, -1,
+                                     status, sizeof(status)));
+  EXPECT_STREQ(status, "fw=1.0 wake=timer power=normal capacity=2500");
+  ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, 1, 0,
+                                     status, sizeof(status)));
+  EXPECT_NE(std::string(status).find("mah=0.01 rt=0.00"), std::string::npos);
+  EXPECT_FALSE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, 350, 100,
+                                      status, 40));
+  const std::string longVersion(256, 'a');
+  EXPECT_FALSE(gm::tsFormatDiagStatus(longVersion.c_str(), "timer", "normal",
+                                      2500, 350, 100, status, sizeof(status)));
+}
 namespace {
 std::string fmt(uint32_t e) {
   char b[40];

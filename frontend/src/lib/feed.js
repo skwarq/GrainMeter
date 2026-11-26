@@ -8,7 +8,7 @@
 // 4 sensor errors, 5 buffered samples, 6 dropped, 7 upload failures,
 // 8 wake count; status = "fw=0.1.1 wake=timer power=normal".
 
-import { batteryPercent } from './battery.js';
+import { batteryPercent, batteryRuntimeDays } from './battery.js';
 import { rssiPercent } from './format.js';
 
 export const FIELD_COUNT = 8;
@@ -293,6 +293,19 @@ export function latestDiag(feed) {
   const e = feed && feed.entries[last(feed)];
   if (!e) return null;
   const [batteryMv, rssi, sensors, sensorErrors, buffered, dropped, uploadFailures, wakeCount] = e.values;
+  // Battery-only rows arrive between complete diagnostics. Use the newest
+  // complete row, even if it reports unknown consumption after a reset.
+  let energy = e;
+  for (let i = last(feed); i >= 0; i--) {
+    const row = feed.entries[i];
+    if (row.values[2] != null || Object.keys(row.kv).length) {
+      energy = row;
+      break;
+    }
+  }
+  const mah = toNumber(energy.kv.mah);
+  const capacity = energy.kv.capacity === undefined ? 2500 : toNumber(energy.kv.capacity);
+  const rt = toNumber(energy.kv.rt);
   return {
     t: e.t,
     batteryMv,
@@ -306,6 +319,10 @@ export function latestDiag(feed) {
     firmware: e.kv.fw || null,
     wake: e.kv.wake || null,
     power: e.kv.power || null,
+    batteryRuntime: {
+      mah_per_day: mah,
+      days: rt !== null && rt >= 0 ? rt : batteryRuntimeDays(mah, energy.values[0], capacity),
+    },
   };
 }
 

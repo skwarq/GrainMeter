@@ -56,8 +56,9 @@ Plan schedulePlan(const RetainedState& st, const Config& cfg, uint32_t nowMonoS,
   // An empty buffer (no probe / nothing mapped yet) still gets a window every
   // upload interval: diagnostics (battery), update check and the LAN console
   // hello depend on it.
-  p.uploadDue = mode != PowerMode::Critical && cfg.uploadConfigured() &&
-                spaced && (regularCount == 0 ? st.hasMeasured != 0 : enough);
+  p.uploadDue = mode != PowerMode::Critical &&
+                (cfg.uploadConfigured() || cfg.talkbackId != 0) && spaced &&
+                (regularCount == 0 ? st.hasMeasured != 0 : enough);
 
   if (p.measureDue || !st.hasMeasured || nowMonoS < st.lastMeasureMonoS) {
     p.sleepS = measureS;  // after measuring now

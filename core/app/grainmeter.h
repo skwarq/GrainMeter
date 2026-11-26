@@ -15,6 +15,7 @@
 #include "data/rommap.h"
 #include "onewire/onewire.h"
 #include "ota/ota_session.h"
+#include "ota/ota_upload.h"
 #include "util/json.h"
 
 #ifndef GM_FW_VERSION
@@ -67,6 +68,7 @@ struct Ports {
   SystemPort* sys;
   OtaTarget* ota;
   HistoryStorage* history = nullptr;  // optional local history
+  RemoteSessionPort* remote = nullptr;
 };
 
 // Application logic shared by the ESP32 firmware and the PC simulator.
@@ -89,6 +91,9 @@ class GrainMeter {
   // One upload window: Wi-Fi up, time, bulk write, diagnostic write, Wi-Fi
   // down. Buffer entries are removed only after a confirmed write.
   const LastUpload& upload(bool alarmWindow = false);
+  // Station must already be connected; bounded SNTP, no radio lifecycle.
+  // Also used before starting a remote session with an unknown clock.
+  bool synchronizeTime();
   void notifyTest(JsonWriter& w);
 
   // Runs whatever the schedule says is due. allowUpload=false keeps the
@@ -126,6 +131,7 @@ class GrainMeter {
   const RomMap& romMap() const { return map_; }
   RetainedState& state() { return *st_; }
   OtaSession& ota() { return ota_; }
+  OtaUpload& otaUpload() { return otaUpload_; }
   HistoryLog& history() { return history_; }
   // Portal action: connects Wi-Fi now, reads the update manifest and, with
   // install, downloads/verifies/installs a newer version (restart requested
@@ -142,6 +148,15 @@ class GrainMeter {
   uint32_t historyMaxGapS() const;
   // {available, records, used_bytes, capacity_bytes, ...} (reads the log).
   void writeHistoryInfo(JsonWriter& w);
+  // Consumes one pending request; caller accounts actual battery-powered
+  // session time with remoteSessionUsed (USB service time is exempt).
+  bool takeRemoteRequest(uint32_t* minutes);
+  void remoteSessionUsed(uint32_t seconds);
+  RemoteUpdateResult lastRemoteUpdateResult() const {
+    return static_cast<RemoteUpdateResult>(st_->updateResult);
+  }
+  const char* lastRemoteUpdateVersion() const { return st_->updateLatest; }
+  uint32_t remoteBudgetLeftS() { return remoteLeftS(); }
   const Ports& ports() const { return p_; }
 
   // Recent error messages (newest last), shown in portal and diagnostics.
@@ -152,6 +167,16 @@ class GrainMeter {
       ;
 
  private:
+  void pollTalkback();
+  void refreshRemoteBudget();
+  uint32_t remoteLeftS();
+  uint32_t remotePendingMin();
+  void writeRemote(JsonWriter& w);
+  uint32_t pendingRemoteMin_ = 0;
+  uint32_t pendingRemoteUntil_ = 0;
+  char lastRemoteCmd_[128] = "";
+  uint32_t lastRemoteEpoch_ = 0;
+  uint32_t lastRemoteMonoS_ = 0;
   void writeAlarm(JsonWriter& w);
   void sendNotifications();
   void writeMeasure(JsonWriter& w);
@@ -219,6 +244,7 @@ class GrainMeter {
   uint32_t forecastAt_ = 0;
   PowerMode powerMode_;
   OtaSession ota_;
+  OtaUpload otaUpload_;
   HistoryLog history_;
 
   enum { kErrorSlots = 8 };

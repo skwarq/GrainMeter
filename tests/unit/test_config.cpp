@@ -2,6 +2,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <map>
 #include <string>
 
 #include "app/config.h"
@@ -126,6 +127,28 @@ TEST_F(ConfigTest, LanWakeOnByDefault) {
   EXPECT_FALSE(apply("lan_wake=2", &cfg, &err));
 }
 
+TEST_F(ConfigTest, LogDestinationValidationAndJson) {
+  EXPECT_EQ(cfg.logDest, 0u);
+  ASSERT_TRUE(apply("log_udp=1&log_dest=mqtt&log_level=2", &cfg, &err));
+  EXPECT_EQ(cfg.logDest, 1u);
+  EXPECT_EQ(cfg.logUdp, 1u);
+  EXPECT_EQ(cfg.logLevel, 2u);
+  char json[4096];
+  gm::JsonWriter w(json, sizeof(json));
+  gm::configWriteJson(w, cfg);
+  ASSERT_TRUE(w.ok());
+  EXPECT_NE(std::string(json).find("\"log_dest\":\"mqtt\""), std::string::npos);
+  for (const char* form : {"log_dest=", "log_dest=1", "log_dest=MQTT",
+                           "log_dest=tcp", "log_dest=%00"}) {
+    const gm::Config before = cfg;
+    EXPECT_FALSE(apply(form, &cfg, &err)) << form;
+    EXPECT_FALSE(err.empty());
+    EXPECT_EQ(std::memcmp(&before, &cfg, sizeof(cfg)), 0);
+  }
+  ASSERT_TRUE(apply("log_dest=udp", &cfg, &err));
+  EXPECT_EQ(cfg.logDest, 0u);
+}
+
 TEST_F(ConfigTest, SoftApDelayAndSwitch) {
   EXPECT_EQ(cfg.apEnabled, 1u);
   EXPECT_EQ(cfg.apDelayS, 60u);
@@ -134,4 +157,165 @@ TEST_F(ConfigTest, SoftApDelayAndSwitch) {
   EXPECT_EQ(cfg.apDelayS, 0u);
   EXPECT_FALSE(apply("ap_delay_s=3601", &cfg, &err));
   EXPECT_FALSE(apply("ap_enabled=yes", &cfg, &err));
+}
+
+TEST_F(ConfigTest, RemoteValidationAndSecrets) {
+  EXPECT_EQ(cfg.remoteBudgetMin, 60u);
+  EXPECT_EQ(cfg.remoteIdleMin, 10u);
+  ASSERT_TRUE(apply("remote_idle_min=1", &cfg, &err));
+  ASSERT_TRUE(apply("remote_idle_min=60", &cfg, &err));
+  ASSERT_TRUE(
+      apply("remote_url=mqtts://"
+            "broker.example:8883&remote_user=device&remote_pass=broker-secret&"
+            "remote_id=gm-0123&talkback_id=4294967295&talkback_key=talk-secret&"
+            "remote_budget_min=1440",
+            &cfg, &err));
+  EXPECT_EQ(cfg.talkbackId, UINT32_MAX);
+  char json[4096];
+  gm::JsonWriter w(json, sizeof(json));
+  gm::configWriteJson(w, cfg);
+  EXPECT_TRUE(w.ok());
+  EXPECT_EQ(std::string(json).find("broker-secret"), std::string::npos);
+  EXPECT_EQ(std::string(json).find("talk-secret"), std::string::npos);
+  EXPECT_NE(std::string(json).find("\"remote_pass_set\":true"),
+            std::string::npos);
+  EXPECT_NE(std::string(json).find("\"talkback_key_set\":true"),
+            std::string::npos);
+  EXPECT_NE(std::string(json).find("\"remote_idle_min\":60"),
+            std::string::npos);
+  ASSERT_TRUE(apply("remote_pass=&talkback_key=", &cfg, &err));
+  EXPECT_STREQ(cfg.remotePass, "broker-secret");
+  for (const char* s :
+       {"remote_url=http://broker", "remote_url=mqtts://",
+        "remote_url=mqtts://host:0", "remote_url=mqtts://host:65536",
+        "remote_url=mqtts://user@host", "remote_url=mqtts://host/path",
+        "remote_id=Bad_ID", "remote_budget_min=1441", "talkback_id=4294967296",
+        "talkback_id=-1", "talkback_id=%2B1", "remote_idle_min=0",
+        "remote_idle_min=61", "remote_idle_min=-1", "remote_idle_min=1.5",
+        "remote_idle_min="}) {
+    const gm::Config before = cfg;
+    EXPECT_FALSE(apply(s, &cfg, &err)) << s;
+    EXPECT_EQ(std::memcmp(&before, &cfg, sizeof(cfg)), 0);
+  }
+  EXPECT_TRUE(
+      apply("remote_url=&remote_id=&remote_budget_min=0&talkback_id=0&remote_"
+            "pass_clear=1&talkback_key_clear=1",
+            &cfg, &err));
+  EXPECT_STREQ(cfg.remotePass, "");
+  EXPECT_STREQ(cfg.talkbackKey, "");
+}
+
+namespace {
+class RemoteStore : public gm::KeyValueStore {
+ public:
+  std::map<std::string, std::string> values;
+  bool get(const char* key, char* out, size_t cap) override {
+    const auto it = values.find(key);
+    if (it == values.end()) return false;
+    snprintf(out, cap, "%s", it->second.c_str());
+    return true;
+  }
+  bool set(const char* key, const char* value) override {
+    EXPECT_LE(strlen(key), 15u);
+    values[key] = value;
+    return true;
+  }
+  bool commit() override { return true; }
+};
+}  // namespace
+
+TEST_F(ConfigTest, LogDestinationPersistenceAndLegacyDefault) {
+  RemoteStore store;
+  store.values["log_udp"] = "1";
+  gm::RomMap map;
+  const char* error = nullptr;
+  ASSERT_TRUE(gm::configLoad(store, &cfg, &map, &error));
+  EXPECT_EQ(cfg.logUdp, 1u);
+  EXPECT_EQ(cfg.logDest, 0u);
+  ASSERT_TRUE(apply("log_dest=mqtt", &cfg, &err));
+  ASSERT_TRUE(gm::configSave(store, cfg));
+  EXPECT_EQ(store.values["log_dest"], "1");
+  gm::configDefaults(&cfg, "https://api.thingspeak.com");
+  ASSERT_TRUE(gm::configLoad(store, &cfg, &map, &error));
+  EXPECT_EQ(cfg.logDest, 1u);
+  for (const char* value : {"2", "-1", "mqtt", ""}) {
+    store.values["log_dest"] = value;
+    gm::configDefaults(&cfg, "https://api.thingspeak.com");
+    EXPECT_FALSE(gm::configLoad(store, &cfg, &map, &error));
+    EXPECT_NE(error, nullptr);
+    EXPECT_EQ(cfg.logDest, 0u);
+  }
+  ASSERT_TRUE(apply("log_dest=udp", &cfg, &err));
+  ASSERT_TRUE(gm::configSave(store, cfg));
+  EXPECT_EQ(store.values["log_dest"], "0");
+}
+
+TEST_F(ConfigTest, RemotePersistenceAndStoredValidation) {
+  ASSERT_TRUE(apply(
+      "remote_url=mqtts://"
+      "broker:8883&remote_user=user&remote_pass=password&remote_id=gm-test&"
+      "talkback_id=4294967295&talkback_key=private&remote_budget_min=1440&"
+      "remote_idle_min=23",
+      &cfg, &err));
+  RemoteStore store;
+  ASSERT_TRUE(gm::configSave(store, cfg));
+  gm::Config loaded;
+  gm::configDefaults(&loaded, "https://api.thingspeak.com");
+  gm::RomMap map;
+  const char* error = nullptr;
+  ASSERT_TRUE(gm::configLoad(store, &loaded, &map, &error));
+  EXPECT_STREQ(loaded.remoteUrl, cfg.remoteUrl);
+  EXPECT_STREQ(loaded.remoteUser, cfg.remoteUser);
+  EXPECT_STREQ(loaded.remotePass, cfg.remotePass);
+  EXPECT_STREQ(loaded.remoteId, cfg.remoteId);
+  EXPECT_STREQ(loaded.talkbackKey, cfg.talkbackKey);
+  EXPECT_EQ(loaded.talkbackId, cfg.talkbackId);
+  EXPECT_EQ(loaded.remoteBudgetMin, cfg.remoteBudgetMin);
+  EXPECT_EQ(loaded.remoteIdleMin, 23u);
+  EXPECT_EQ(store.values["remote_idle_min"], "23");
+  store.values["remote_url"] = "https://wrong";
+  store.values["remote_id"] = "INVALID";
+  store.values["remote_budget_m"] = "1441";
+  store.values["talkback_id"] = "4294967296";
+  store.values["remote_idle_min"] = "61";
+  gm::configDefaults(&loaded, "https://api.thingspeak.com");
+  EXPECT_FALSE(gm::configLoad(store, &loaded, &map, &error));
+  EXPECT_STREQ(loaded.remoteUrl, "");
+  EXPECT_STREQ(loaded.remoteId, "");
+  EXPECT_EQ(loaded.talkbackId, 0u);
+  EXPECT_EQ(loaded.remoteBudgetMin, 60u);
+  EXPECT_EQ(loaded.remoteIdleMin, 10u);
+}
+
+TEST_F(ConfigTest, BatteryCapacityValidationAndPersistence) {
+  EXPECT_EQ(cfg.battCapacityMah, 2500u);
+  for (const char* form : {"batt_capacity_mah=99", "batt_capacity_mah=20001",
+                           "batt_capacity_mah=-1", "batt_capacity_mah=2500.5",
+                           "batt_capacity_mah="}) {
+    const gm::Config before = cfg;
+    EXPECT_FALSE(apply(form, &cfg, &err));
+    EXPECT_EQ(std::memcmp(&before, &cfg, sizeof(cfg)), 0);
+    EXPECT_FALSE(err.empty());
+  }
+  ASSERT_TRUE(apply("batt_capacity_mah=100", &cfg, &err));
+  ASSERT_TRUE(apply("batt_capacity_mah=20000", &cfg, &err));
+  RemoteStore store;
+  ASSERT_TRUE(gm::configSave(store, cfg));
+  gm::Config loaded;
+  gm::configDefaults(&loaded, "https://api.thingspeak.com");
+  gm::RomMap map;
+  const char* error = nullptr;
+  ASSERT_TRUE(gm::configLoad(store, &loaded, &map, &error));
+  EXPECT_EQ(loaded.battCapacityMah, 20000u);
+  char out[4096];
+  gm::JsonWriter w(out, sizeof(out));
+  gm::configWriteJson(w, loaded);
+  ASSERT_TRUE(w.ok());
+  EXPECT_NE(std::string(out).find("\"batt_capacity_mah\":20000"),
+            std::string::npos);
+  store.values["batt_capacity"] = "99";
+  gm::configDefaults(&loaded, "https://api.thingspeak.com");
+  EXPECT_FALSE(gm::configLoad(store, &loaded, &map, &error));
+  EXPECT_NE(error, nullptr);
+  EXPECT_EQ(loaded.battCapacityMah, 2500u);
 }

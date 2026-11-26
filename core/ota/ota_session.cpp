@@ -135,7 +135,7 @@ void OtaSession::abort(const char* reason) {
   }
 }
 
-void OtaSession::writeJson(JsonWriter& w) const {
+void OtaSession::writeJson(JsonWriter& w, size_t chunk) const {
   static const char* const kStates[] = {"idle", "receiving", "done", "failed"};
   w.beginObject()
       .kv("state", kStates[static_cast<int>(state_)])
@@ -143,6 +143,7 @@ void OtaSession::writeJson(JsonWriter& w) const {
       .kvu("expected", expected_)
       .kv("file", fileName_)
       .kv("error", error_);
+  if (chunk) w.kvu("chunk", chunk);
   if (headerChecked_) {
     w.kv("version", info_.version)
         .kv("project", info_.project)

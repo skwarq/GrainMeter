@@ -10,9 +10,11 @@ class WifiLink;
 class EspSystemPort : public gm::SystemPort {
  public:
   void init(WifiLink* wifi);
+  gm::LogSource* logSource() override;
 
   const char* platformName() override { return "esp32c6"; }
   int batteryMv() override;
+  int32_t batteryMahPerDayCenti() override;
   const char* wakeReason() override { return wake_; }
   const char* resetReason() override { return reset_; }
   void requestRestart() override { restart = true; }

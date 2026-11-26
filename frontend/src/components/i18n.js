@@ -12,6 +12,7 @@ export const useI18n = () => useContext(I18nContext);
 
 /** Human readable text for an ApiError (uses lib/errors.js mapping). */
 export function errorText(t, described) {
+  if (!described.key) return described.detail;
   const base = t(described.key, described.params);
   return described.detail ? `${base} (${described.detail})` : base;
 }

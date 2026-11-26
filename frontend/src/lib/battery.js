@@ -53,6 +53,36 @@ export function batteryLevel(pct) {
   return 'ok';
 }
 
+/** Runtime in days from consumption and voltage; null without usable data. */
+export function batteryRuntimeDays(mah, mv, capacity = 2500) {
+  const soc = batteryPercent(mv);
+  if (
+    !Number.isFinite(mah) ||
+    mah <= 0 ||
+    soc === null ||
+    !Number.isInteger(capacity) ||
+    capacity < 100 ||
+    capacity > 20000
+  )
+    return null;
+  return (capacity * soc) / 100 / mah;
+}
+
+export function batteryRuntimeText(runtime, t) {
+  if (
+    !runtime ||
+    !Number.isFinite(runtime.days) ||
+    runtime.days < 0 ||
+    !Number.isFinite(runtime.mah_per_day) ||
+    runtime.mah_per_day <= 0
+  )
+    return t('batteryRuntime.collecting');
+  return t('batteryRuntime.text', {
+    days: Math.round(runtime.days),
+    mah: runtime.mah_per_day.toFixed(2),
+  });
+}
+
 /** Ordered {t: UTC milliseconds, batteryMv} points; same segment estimator as core. */
 export function batteryForecast(points, nowMs, critMv = 3500) {
   const f = { state: 'unknown', days: null, slope_mv_per_day: 0, samples: 0 };

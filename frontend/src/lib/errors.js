@@ -46,6 +46,10 @@ export function describeError(err, context) {
   const e = /** @type {any} */ (err);
   const detail = typeof e.serverMessage === 'string' ? e.serverMessage : '';
   switch (e.kind) {
+    case 'unsupported':
+      return { key: 'err.unsupported', params: {}, detail: '' };
+    case 'untrusted':
+      return { key: '', params: {}, detail };
     case 'network':
       return { key: 'err.network', params: {}, detail: '' };
     case 'timeout':

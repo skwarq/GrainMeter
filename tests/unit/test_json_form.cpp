@@ -11,7 +11,7 @@ TEST(Json, NestedStructureAndEscaping) {
   char buf[256];
   gm::JsonWriter w(buf, sizeof(buf));
   w.beginObject()
-      .kv("a", "x\"y\\z\n")
+      .kv("a", "x\"y\\z\n\b\f")
       .key("b")
       .beginArray()
       .num(-1)
@@ -21,9 +21,10 @@ TEST(Json, NestedStructureAndEscaping) {
       .endArray();
   w.kvb("c", true).key("d").beginObject().endObject().endObject();
   ASSERT_TRUE(w.ok());
-  EXPECT_STREQ(buf,
-               "{\"a\":\"x\\\"y\\\\z\\n\",\"b\":[-1,-0.05,21.53,null],\"c\":"
-               "true,\"d\":{}}");
+  EXPECT_STREQ(
+      buf,
+      "{\"a\":\"x\\\"y\\\\z\\n\\b\\f\",\"b\":[-1,-0.05,21.53,null],\"c\":"
+      "true,\"d\":{}}");
 }
 
 TEST(Json, OverflowIsSticky) {

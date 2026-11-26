@@ -2,7 +2,7 @@ import { useI18n, tOr } from '../components/i18n.js';
 import { useStatus, useTick } from '../components/hooks.js';
 import { Card, Badge, Meter, Loading, Icon, KV, PageHead } from '../components/ui.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
-import { batteryPercent, batteryLevel, batteryForecastText } from '../lib/battery.js';
+import { batteryPercent, batteryLevel, batteryForecastText, batteryRuntimeText } from '../lib/battery.js';
 import { formatDuration, formatClock, formatEpoch, rssiBars } from '../lib/format.js';
 import { pointState, formatTemp, tempColor, tempStats } from '../lib/temp.js';
 import { POINT_COUNT } from '../lib/silo.js';
@@ -178,6 +178,7 @@ export function Overview() {
               {level === 'low' || level === 'critical' ? ' · ' + t('overview.battLow') : ''}
             </p>
             <p class="small">{batteryForecastText(s.battery_forecast, t)}</p>
+            <p class="small">{batteryRuntimeText(s.battery_runtime, t)}</p>
             {s.power && s.power.charging && <p class="small">{t('power.charging')}</p>}
             {s.power && (
               <p class="small">

@@ -41,7 +41,7 @@ function initialLang() {
   return DEFAULT_LANG;
 }
 
-export function App() {
+export function App({ children }) {
   const [lang, setLangState] = useState(initialLang);
   const [unlock, setUnlock] = useState(null);
   const route = useHashRoute();
@@ -105,6 +105,7 @@ export function App() {
   return (
     <I18nContext.Provider value={i18n}>
       <StatusContext.Provider value={statusCtx}>
+        {children}
         <div class="app">
           <header class="topbar">
             <a class="brand" href="#/">

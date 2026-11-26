@@ -107,6 +107,14 @@ struct RetainedState {
   uint16_t battCount;
   BatteryPoint batt[kBufferCapacity];
 
+  // Remote usage: UTC day when known, otherwise a rolling monotonic day.
+  uint32_t remoteUsedS;
+  uint32_t remoteDay;
+  uint32_t remoteWindowMonoS;
+  uint8_t remoteBudgetStarted;
+  uint8_t remoteBudgetUtc;
+  uint8_t remoteReserved[2];
+
   uint32_t crc;
 
   // --- helpers (no virtuals: must stay POD-compatible) ---

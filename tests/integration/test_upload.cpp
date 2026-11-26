@@ -208,3 +208,89 @@ TEST(Upload, SntpAgainAfterADayWithoutDate) {
   t.runFor(5 * 3600);
   EXPECT_EQ(t.dev->network().syncCount(), 2u);  // > 24 h: SNTP again
 }
+
+TEST(ClockSync, RemoteSessionCanSyncWithoutAnUploadOrRadioDisconnect) {
+  TestDevice t("session_clock", 0);
+  ASSERT_TRUE(t.started);
+  auto& app = t.dev->app();
+  EXPECT_FALSE(t.dev->clock().wallValid());
+  // No connected station: failure remains visible and is retried.
+  EXPECT_FALSE(app.synchronizeTime());
+  EXPECT_FALSE(app.state().hasTimeSync);
+  char err[100];
+  ASSERT_TRUE(t.dev->network().connect(app.config(), 1000, err, sizeof(err)));
+  ASSERT_TRUE(app.synchronizeTime());
+  EXPECT_TRUE(t.dev->clock().wallValid());
+  EXPECT_TRUE(app.state().valid());
+  EXPECT_EQ(app.state().timeSource, 1u);
+  EXPECT_STREQ(t.dev->network().stateText(), "connected");
+  EXPECT_EQ(t.dev->http().postCount(), 0u);
+  const unsigned syncs = t.dev->network().syncCount();
+  EXPECT_TRUE(app.synchronizeTime());
+  EXPECT_EQ(t.dev->network().syncCount(), syncs);
+}
+
+TEST(ClockSync, RecoveredClockForcesNextWindowSyncAndCheckpointsMeasurements) {
+  TestDevice t("recovered_clock");
+  setup(t);
+  t.runFor(3600);
+  class RecoveredClock : public gm::Clock {
+   public:
+    explicit RecoveredClock(gmpc::SimClock& clock) : clock_(clock) {}
+    uint32_t monoS() override { return clock_.monoS(); }
+    uint32_t epoch() override { return clock_.epoch(); }
+    bool wallValid() override { return clock_.wallValid(); }
+    bool wallRestored() override { return true; }
+    bool setEpoch(uint32_t epoch) override { return clock_.setEpoch(epoch); }
+    void checkpoint() override { ++checkpoints; }
+    unsigned checkpoints = 0;
+
+   private:
+    gmpc::SimClock& clock_;
+  } clock(t.dev->clock());
+  gm::Ports ports = t.dev->app().ports();
+  ports.clock = &clock;
+  ports.history = nullptr;
+  gm::RetainedState state = t.dev->app().state();
+  ASSERT_TRUE(state.hasTimeSync);
+  gm::GrainMeter recovered(ports, &state, gm::ConfigLimits(),
+                           "mock://thingspeak");
+  ASSERT_TRUE(recovered.begin());
+  EXPECT_FALSE(state.hasTimeSync);
+  EXPECT_TRUE(state.valid());  // retry requirement survives another sleep
+  const unsigned syncs = t.dev->network().syncCount();
+  recovered.measure(true);
+  EXPECT_GT(clock.checkpoints, 0u);
+  recovered.upload();
+  EXPECT_EQ(t.dev->network().syncCount(), syncs + 1);
+  EXPECT_TRUE(state.hasTimeSync);
+  const unsigned checkpoints = clock.checkpoints;
+  char status[20000];
+  gm::JsonWriter w(status, sizeof(status));
+  recovered.writeDiag(w);
+  ASSERT_TRUE(w.ok());
+  EXPECT_NE(std::string(status).find("\"restored\":true"), std::string::npos);
+  EXPECT_GT(checkpoints, 1u);  // measurement and successful sync
+}
+
+TEST(Upload, TalkbackHeartbeatAndDisabledPolling) {
+  TestDevice t("talkback_heartbeat", 0);
+  ASSERT_TRUE(t.started);
+  t.dev->http().queueTalkback("REMOTE 5 0");
+  t.dev->tick();
+  ASSERT_EQ(t.dev->http().talkbackCount(), 0u);
+  const char* form = "talkback_id=3&talkback_key=secret&remote_budget_min=4";
+  char err[100];
+  ASSERT_TRUE(
+      t.dev->app().applyConfig(gm::Form(form, strlen(form)), err, sizeof(err)));
+  t.runFor(3600);
+  EXPECT_EQ(t.dev->http().talkbackCount(), 1u);
+  char status[20000];
+  gm::JsonWriter w(status, sizeof(status));
+  t.dev->app().writeStatus(w);
+  ASSERT_TRUE(w.ok());
+  EXPECT_NE(std::string(status).find("\"pending_min\":4"), std::string::npos);
+  EXPECT_EQ(std::string(status).find("secret"), std::string::npos);
+  t.dev->tick();
+  EXPECT_EQ(t.dev->http().talkbackCount(), 1u);
+}

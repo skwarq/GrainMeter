@@ -1,0 +1,57 @@
+{
+  "password": "tęst-password",
+  "id": "gm-test",
+  "nonce": "0123456789abcdef0123456789abcdef",
+  "kdf_iter": 10000,
+  "K": "f0f6f2b556212b17f8213f91db5a3c13067e406dcaa76ef74a1dba0047a8d043",
+  "Kmac": "98ca5786e8a65deeaad1119ca5db70411cd8e4d79929fd675b64f4a611858cb7",
+  "Kenc": "27b49170d3ddfd0dfb17c6a5c68b9b3b79f5e74f436e11e5183e781772e3da82",
+  "req": {
+    "v": 2,
+    "cid": "0123456789abcdef",
+    "seq": 7,
+    "mid": "vector",
+    "iv": "abcdef0123456789abcdef0123456789",
+    "method": "POST",
+    "path": "/api/config",
+    "body": "2AeJcU5DRqFYhgO+n0HmbNzcyzyUAMhcaXqUFncQN5o+",
+    "plaintext_hex": "6e616d653d5a61c5bcc3b3c582c487266e6f74653d68656c6c6f5c776f726c640a",
+    "text": "gm2req\ngm-test\n0123456789abcdef0123456789abcdef\n0123456789abcdef\n7\nvector\nPOST\n/api/config\nabcdef0123456789abcdef0123456789\n2AeJcU5DRqFYhgO+n0HmbNzcyzyUAMhcaXqUFncQN5o+",
+    "mac": "9bb7ae54db3b82e2c5139f22cb8064ee12626d807cb6522a4c4e429c715fa661"
+  },
+  "res": {
+    "v": 2,
+    "cid": "0123456789abcdef",
+    "seq": 7,
+    "mid": "vector",
+    "iv": "00000000000000000000000000000001",
+    "status": 200,
+    "ctype": "application/octet-stream",
+    "enc": "base64",
+    "restart": true,
+    "body": "erABaTNqVJvke1huYFAoagty6FH/YFj1mXv+MuiuB/J+5Hp7igFXVrHRNpGhy/eb8rQ8X2rS3LhhpMqpDVLluSDV3xjQokLmth23piGcV1w=",
+    "plaintext_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f",
+    "text": "gm2res\ngm-test\n0123456789abcdef0123456789abcdef\n0123456789abcdef\n7\nvector\n200\napplication/octet-stream\nbase64\n1\n00000000000000000000000000000001\nerABaTNqVJvke1huYFAoagty6FH/YFj1mXv+MuiuB/J+5Hp7igFXVrHRNpGhy/eb8rQ8X2rS3LhhpMqpDVLluSDV3xjQokLmth23piGcV1w=",
+    "mac": "d554d9b40791a311b86856f06276bfbea9c335ff4906530c8ecd0cab195a4992"
+  },
+  "status": {
+    "fields": {
+      "v": 2,
+      "state": "online",
+      "nonce": "0123456789abcdef0123456789abcdef",
+      "fw": "2.0.0",
+      "name": "Silo \"\\\b\f\nż😀",
+      "until": 1800003600,
+      "remaining_s": 3600,
+      "budget_left_s": 7200,
+      "kdf_iter": 10000,
+      "op": {
+        "mid": "finish",
+        "fw": "9.9.9-test",
+        "result": "ok"
+      }
+    },
+    "text": "gm2status\n[2,\"gm-test\",\"online\",\"0123456789abcdef0123456789abcdef\",\"2.0.0\",\"Silo \\\"\\\\\\b\\f\\nż😀\",1800003600,3600,7200,10000,[\"finish\",\"9.9.9-test\",\"ok\"]]",
+    "mac": "c48fd2bcaddbce63f1fd52aa6c470725303c74e2555badfcf3b268806ed57d34"
+  }
+}

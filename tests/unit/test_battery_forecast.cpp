@@ -5,6 +5,36 @@
 
 #include "app/battery_forecast.h"
 namespace {
+TEST(BatteryRuntime, SocCurveAndInterpolation) {
+  EXPECT_EQ(gm::batteryPercent(-1), -1);
+  EXPECT_EQ(gm::batteryPercent(0), -1);
+  EXPECT_EQ(gm::batteryPercent(2900), 0);
+  EXPECT_EQ(gm::batteryPercent(4350), 100);
+  EXPECT_EQ(gm::batteryPercent(3840), 50);
+  EXPECT_EQ(gm::batteryPercent(3650), 8);
+  EXPECT_EQ(gm::batteryPercent(3500), 4);
+  EXPECT_EQ(gm::batteryPercent(3930), 68);
+  int previous = 0;
+  for (int mv = 3000; mv <= 4200; ++mv) {
+    const int pct = gm::batteryPercent(mv);
+    EXPECT_GE(pct, previous);
+    EXPECT_LE(pct, 100);
+    previous = pct;
+  }
+}
+
+TEST(BatteryRuntime, ConsumptionAndMissingData) {
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3840, 2500, 350), 35714);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3840, 5000, 350), 71429);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3000, 2500, 350), 0);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(4200, 20000, 1), 200000000);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(-1, 2500, 350), -1);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3840, 2500, -1), -1);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3840, 2500, 0), -1);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3840, 99, 350), -1);
+  EXPECT_EQ(gm::batteryRuntimeCentiDays(3840, 20001, 350), -1);
+}
+
 const uint32_t base = 1700000000;
 std::vector<gm::BatterySample> series(int hours, int drop = 1) {
   std::vector<gm::BatterySample> p;
