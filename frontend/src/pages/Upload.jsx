@@ -4,6 +4,9 @@ import { useAction, useStatus, useTick } from '../components/hooks.js';
 import { Card, Button, Badge, KV, Meter, Loading, PageHead, Icon } from '../components/ui.jsx';
 import { formatDuration, formatEpoch } from '../lib/format.js';
 
+// Diagnostic channel in the last window (battery points + full row).
+const DIAG_TONE = { sent: 'ok', failed: 'danger', not_due: 'neutral', not_configured: 'neutral' };
+
 export function Upload() {
   const { t, lang } = useI18n();
   const { status: s, fetchedAt, refresh } = useStatus();
@@ -76,8 +79,8 @@ export function Upload() {
                   [t('upload.confirmed'), lu.samples_confirmed],
                   [
                     t('upload.diagChannel'),
-                    <Badge key="d" tone={lu.diag_ok ? 'ok' : 'warn'}>
-                      {lu.diag_ok ? t('common.ok') : t('common.failed')}
+                    <Badge key="d" tone={DIAG_TONE[lu.diag] || (lu.diag_ok ? 'ok' : 'neutral')}>
+                      {lu.diag ? t('upload.diag.' + lu.diag) : lu.diag_ok ? t('common.ok') : t('common.failed')}
                     </Badge>,
                   ],
                 ]}

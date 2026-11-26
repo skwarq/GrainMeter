@@ -4,7 +4,7 @@ import { I18nContext, tOr, useI18n } from '../components/i18n.js';
 import { Badge, Button, Card, KV, Loading, Logo } from '../components/ui.jsx';
 import { ALERT_DEFAULTS, AlertsCard, DeviceCharts, HistoryCard, PointTable } from '../components/History.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
-import { batteryPercent } from '../lib/battery.js';
+import { batteryPercent, batteryForecast, batteryForecastText } from '../lib/battery.js';
 import { formatDuration } from '../lib/format.js';
 import { RANGES, alerts as findAlerts, gapThreshold, latestDiag, latestPoints } from '../lib/feed.js';
 import { powerTone } from '../lib/power.js';
@@ -270,6 +270,13 @@ function DeviceCard({ diag, diagLast, error, t, now, range }) {
     );
   }
   const pct = batteryPercent(d.batteryMv);
+  // Diagnostic feeds do not publish the configured critical threshold; use the default 3500 mV.
+  const forecast = batteryForecast(
+    (diag?.entries || []).map((e) => ({ t: e.t, batteryMv: e.values[0] })),
+    now,
+    3500,
+  );
+  const forecastText = RANGES[range] < 86400000 ? t('batteryForecast.range') : batteryForecastText(forecast, t);
   return (
     <Card title={t('dash.device')} icon="chip" class="dash-device">
       <KV
@@ -280,6 +287,7 @@ function DeviceCard({ diag, diagLast, error, t, now, range }) {
               ? '—'
               : `${(d.batteryMv / 1000).toFixed(2)} V${pct === null ? '' : ' · ~' + pct + ' %'}`,
           ],
+          [t('batteryForecast.title'), forecastText],
           d.power && [
             t('power.mode'),
             <Badge key="pm" tone={powerTone(d.power)}>

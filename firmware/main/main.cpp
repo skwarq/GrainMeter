@@ -156,6 +156,15 @@ static bool batteryAllowsRadio() {
          usbConnected();
 }
 
+// A client connected: wait (without the device lock) until it logged in or
+// gave up; the session task closes silent clients after 10 s.
+static bool lanWaitLogin() {
+  while (lanClientConnected() && !lanSessionActive()) {
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+  return lanSessionActive();
+}
+
 // End of an upload window (Wi-Fi still up): offer the LAN console for a
 // moment. Runs inside the upload, i.e. with the device lock held.
 static void lanWakeHook() {
@@ -164,7 +173,7 @@ static void lanWakeHook() {
     return;
   }
   if (lanOffer(lanAnnounce(), 500)) {
-    ESP_LOGI(kTag, "LAN console connected: staying awake");
+    ESP_LOGI(kTag, "LAN console client: staying awake while it logs in");
     d.wifi.setKeepStation(true);
   }
 }
@@ -459,7 +468,7 @@ extern "C" void app_main(void) {
     connectLan();
     if (d.wifi.connected()) {
       d.wifi.syncTime(gm::kTimeSyncTimeoutMs);
-      if (lanOffer(lanAnnounce(), 3000)) {
+      if (lanOffer(lanAnnounce(), 3000) && lanWaitLogin()) {
         ESP_LOGI(kTag, "LAN console connected after reset: staying awake");
       }
     }
@@ -474,7 +483,7 @@ extern "C" void app_main(void) {
     ESP_LOGI(kTag, "resuming the LAN console");
     connectLan();
     for (int i = 0; i < 40 && d.wifi.connected() && !lanSessionActive(); ++i) {
-      lanOffer(lanAnnounce(), 3000);
+      if (lanOffer(lanAnnounce(), 3000)) lanWaitLogin();
     }
     if (!lanSessionActive()) {
       d.wifi.setKeepStation(false);
@@ -515,7 +524,7 @@ extern "C" void app_main(void) {
         usbConnected() &&
         (usbConsoleIdleSeconds() < 60 ||
          (d.sys.coldBoot && esp_timer_get_time() - bootUs < 10000000));
-    if (usbActive || d.sys.enterService || lanSessionActive()) {
+    if (usbActive || d.sys.enterService || lanClientConnected()) {
       vTaskDelay(pdMS_TO_TICKS(1000));
       continue;
     }

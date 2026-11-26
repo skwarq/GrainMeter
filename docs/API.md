@@ -169,8 +169,8 @@ new image fails its first start and is rolled back).
 | Field | Range | Meaning |
 | --- | --- | --- |
 | `diag_every_h` | 0..168 (default 6) | diagnostic channel every N hours, 0 = every upload |
-| `batt_low_mv` | 0 or 2500..4500 (3450) | below: economy mode |
-| `batt_crit_mv` | 0 or 2500..4500 (3300), <= low | below: critical mode |
+| `batt_low_mv` | 0 or 2500..4500 (3650) | below: economy mode |
+| `batt_crit_mv` | 0 or 2500..4500 (3500), <= low | below: critical mode |
 | `update_url` | "" or https:// (PC also http://, mock://) | remote update manifest |
 | `update_check_h` | 0..720 (24) | manifest check period, 0 = off |
 | `static_ip`, `gateway`, `netmask`, `dns` | "" or a.b.c.d | static IPv4 (empty = DHCP); dns defaults to gateway |

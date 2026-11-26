@@ -141,3 +141,34 @@ TEST(ThingSpeak, DiagMessage) {
   EXPECT_NE(j.find("\"field2\":-61"), std::string::npos);
   EXPECT_NE(j.find("\"field8\":17"), std::string::npos);
 }
+
+TEST(ThingSpeak, DiagBulkBatteryPointsAndFullRow) {
+  static gm::RetainedState st;
+  st.init();
+  gm::BatteryPoint p = {};
+  p.epoch = 1700000000u;
+  p.mv = 3900;
+  st.battPush(p);
+  p.epoch = 0;  // measured before the clock was known: reconstructed
+  p.monoS = 900;
+  p.mv = 3890;
+  st.battPush(p);
+  gm::DiagValues d = {};
+  d.batteryMv = 3880;
+  d.status = "fw=x";
+  char out[2048];
+  size_t points = 0;
+  ASSERT_TRUE(gm::tsBuildDiagBulk(st, &d, "DIAGKEY000000001", 1700003600u, 1800,
+                                  out, sizeof(out), &points));
+  EXPECT_EQ(points, 2u);
+  const std::string body(out);
+  EXPECT_NE(body.find("\"field1\":3900"), std::string::npos) << body;
+  // 1700003600 - (1800 - 900) = 1700002700 -> 2023-11-14 23:58:20 UTC
+  EXPECT_NE(body.find("\"field1\":3890"), std::string::npos) << body;
+  EXPECT_NE(body.find("\"field3\""), std::string::npos);  // full row
+  ASSERT_TRUE(gm::tsBuildDiagBulk(st, nullptr, "DIAGKEY000000001", 1700003600u,
+                                  1800, out, sizeof(out), &points));
+  EXPECT_EQ(std::string(out).find("\"field3\""), std::string::npos);
+  st.battRemoveFront(points);
+  EXPECT_EQ(st.battCount, 0u);
+}

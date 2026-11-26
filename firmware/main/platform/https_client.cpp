@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include "platform/https_client.h"
 
+#include <strings.h>
+
 #include <cstdio>
 #include <cstring>
 
 #include "esp_crt_bundle.h"
 #include "esp_log.h"
+#include "util/http_date.h"
 
 static const char* kTag = "https";
 
@@ -14,6 +17,7 @@ static gm::HttpResult emptyResult() {
   r.transportOk = false;
   r.status = -1;
   r.error[0] = '\0';
+  r.serverEpoch = 0;
   return r;
 }
 
@@ -41,6 +45,19 @@ void HttpsClient::dropConnection() {
 
 void HttpsClient::endSession() { dropConnection(); }
 
+esp_err_t HttpsClient::onEvent(esp_http_client_event_t* evt) {
+  if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key != nullptr &&
+      evt->header_value != nullptr &&
+      strcasecmp(evt->header_key, "Date") == 0) {
+    HttpsClient* self = static_cast<HttpsClient*>(evt->user_data);
+    uint32_t epoch = 0;
+    if (self != nullptr && gm::parseHttpDate(evt->header_value, &epoch)) {
+      self->dateEpoch_ = epoch;
+    }
+  }
+  return ESP_OK;
+}
+
 esp_http_client_handle_t HttpsClient::prepare(const char* url,
                                               esp_http_client_method_t method,
                                               uint32_t timeoutMs,
@@ -64,6 +81,8 @@ esp_http_client_handle_t HttpsClient::prepare(const char* url,
     // github.com and a ~900 character signed URL to release-assets.
     cfg.buffer_size = 8192;     // response headers
     cfg.buffer_size_tx = 2048;  // request line + headers
+    cfg.event_handler = &HttpsClient::onEvent;
+    cfg.user_data = this;
     client_ = esp_http_client_init(&cfg);
     if (client_ == nullptr) {
       snprintf(res->error, sizeof(res->error), "client init failed");
@@ -75,6 +94,7 @@ esp_http_client_handle_t HttpsClient::prepare(const char* url,
     esp_http_client_set_timeout_ms(client_, static_cast<int>(timeoutMs));
   }
   esp_http_client_set_method(client_, method);
+  dateEpoch_ = 0;
   return client_;
 }
 
@@ -104,6 +124,7 @@ gm::HttpResult HttpsClient::postJson(const char* url, const char* body,
     return res;
   }
   res.status = esp_http_client_get_status_code(c);
+  res.serverEpoch = dateEpoch_;  // verified TLS peer: usable for the clock
   int total = 0;
   while (respCap > 1 && total < static_cast<int>(respCap) - 1) {
     const int n = esp_http_client_read(c, resp + total,
@@ -173,6 +194,7 @@ gm::HttpResult HttpsClient::get(const char* url, uint32_t timeoutMs, char* resp,
     dropConnection();
     return res;
   }
+  res.serverEpoch = dateEpoch_;
   int total = 0;
   while (respCap > 1 && total < static_cast<int>(respCap) - 1) {
     const int n = esp_http_client_read(c, resp + total,

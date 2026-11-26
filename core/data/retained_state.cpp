@@ -20,7 +20,9 @@ bool RetainedState::valid() const {
   if (magic != kRetainedMagic || size != sizeof(*this)) {
     return false;
   }
-  if (head >= kBufferCapacity || count > kBufferCapacity) {
+  if (head >= kBufferCapacity || count > kBufferCapacity ||
+      alarm.count > kNotifySlots || battHead >= kBufferCapacity ||
+      battCount > kBufferCapacity) {
     return false;
   }
   const size_t len = offsetof(RetainedState, crc);
@@ -28,6 +30,21 @@ bool RetainedState::valid() const {
 }
 
 void RetainedState::seal() { crc = crc32(this, offsetof(RetainedState, crc)); }
+
+void RetainedState::battPush(const BatteryPoint& p) {
+  if (battCount == kBufferCapacity) {
+    battHead = static_cast<uint16_t>((battHead + 1) % kBufferCapacity);
+    --battCount;
+  }
+  battAt(battCount) = p;
+  ++battCount;
+}
+
+void RetainedState::battRemoveFront(size_t n) {
+  if (n > battCount) n = battCount;
+  battHead = static_cast<uint16_t>((battHead + n) % kBufferCapacity);
+  battCount = static_cast<uint16_t>(battCount - n);
+}
 
 Sample* RetainedState::push(const Sample& s) {
   if (count == kBufferCapacity) {

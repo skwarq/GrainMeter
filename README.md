@@ -250,6 +250,10 @@ DFRobot podaje pobór w deep sleep 16 µA (V1.0) i 36 µA (V1.2) – do pomiaru.
 
 ## Sonda STW-100 – podłączenie
 
+Sprzęt (tor zasilania, diody, akumulator AKYGA LP475085 i progi, ładowanie
+poniżej 0 °C, budżet energii, schematy i noty w `docs/datasheets/`):
+**[docs/hardware.md](docs/hardware.md)**.
+
 Pełny schemat (sonda, przycisk serwisowy, panel, akumulator), lista części i
 procedura pierwszego uruchomienia: **[docs/wiring.md](docs/wiring.md)**.
 
@@ -359,12 +363,20 @@ Kanał główny: `field1..field8` = temperatury punktów 1–8 [°C],
 `status` = `seq=<nr> p3:crc_error ...`. **Brakująca temperatura jest pomijana**
 (pole nieobecne), nigdy nie jest wysyłana jako 0.
 
-Kanał diagnostyczny (8 pól zajętych przez temperatury, więc osobny kanał),
-wysyłany co `diag_every_h` godzin (domyślnie 6, 0 = przy każdej wysyłce):
-`field1` akumulator [mV], `field2` RSSI [dBm], `field3` znalezione czujniki,
-`field4` błędne odczyty, `field5` próbki w buforze, `field6` próbki utracone,
-`field7` licznik nieudanych wysyłek, `field8` licznik wybudzeń,
-`status` = wersja firmware i przyczyna wybudzenia.
+Kanał diagnostyczny (8 pól zajętych przez temperatury, więc osobny kanał):
+
+- **Napięcie akumulatora z każdego pomiaru** (także bez sondy i bez
+  zmapowanych czujników) czeka w buforze RTC jak temperatury i trafia
+  zbiorczo w każdym oknie wysyłki jako osobne wpisy `field1` [mV] z czasem
+  pomiaru – na ThingSpeak powstaje pełny wykres i statystyka baterii.
+- **Pełny wiersz** co `diag_every_h` godzin (domyślnie 6, 0 = w każdym
+  oknie): `field1` akumulator [mV], `field2` RSSI [dBm], `field3` znalezione
+  czujniki, `field4` błędne odczyty, `field5` próbki w buforze, `field6`
+  próbki utracone, `field7` licznik nieudanych wysyłek, `field8` licznik
+  wybudzeń, `status` = wersja firmware, przyczyna wybudzenia, tryb zasilania.
+
+Wynik w `last_upload.diag` (status, portal → Wysyłka): `sent`, `failed`,
+`not_due` (nic do wysłania w tym oknie) albo `not_configured`.
 
 ### Bufor, duplikaty, przepełnienie, zasilanie
 
@@ -585,9 +597,9 @@ godzinę → rzędu 5 mAh/dobę. Okno Wi-Fi jest najdroższe, dlatego:
 | Stały IP (opcja) | `static_ip`, `gateway`, `netmask`, `dns` – bez DHCP |
 | Jedna sesja TLS | wszystkie żądania okna (dane, diagnostyka, manifest) przez jedno połączenie keep-alive |
 | Diagnostyka co 6 h | `diag_every_h` (0 = przy każdej wysyłce) |
-| SNTP w każdym oknie | koryguje dryft zegara RC (~0,2 s), znaczniki czasu się nie rozjeżdżają |
-| Tryb oszczędny | bateria < `batt_low_mv` (3450 mV): wysyłka 4× rzadziej, brak zdalnej aktualizacji |
-| Tryb krytyczny | bateria < `batt_crit_mv` (3300 mV): bez Wi-Fi, pomiar 2× rzadziej, dane czekają w buforze |
+| Czas z nagłówka `Date` | Zegar RTC (oscylator RC, bez kwarcu 32 kHz) dryfuje; każda odpowiedź HTTPS ThingSpeak niesie dokładny czas w nagłówku `Date` i koryguje go za darmo (od 2 s różnicy). SNTP tylko po utracie zasilania albo gdy przez dobę nie było żadnej synchronizacji – oszczędza 0,5–1,6 s radia na okno. Diagnostyka: `clock` (`source`, `sync_age_s`, `last_fix_s`). |
+| Tryb oszczędny | bateria < `batt_low_mv` (3650 mV): wysyłka 4× rzadziej, brak zdalnej aktualizacji |
+| Tryb krytyczny | bateria < `batt_crit_mv` (3500 mV): bez Wi-Fi, pomiar 2× rzadziej, dane czekają w buforze |
 | Przycisk EXT1 | wejście w serwis bez resetu i bez utraty bufora |
 | Konsola LAN | tylko 0,5 s nasłuchu na końcu okna wysyłki (`lan_wake 0` wyłącza) |
 
@@ -848,3 +860,65 @@ bez sekretów, akcje przypięte do SHA):
    nie), a w profilu podpisanym odrzucenie obrazu niepodpisanego /
    podpisanego innym kluczem.
 9. Zapis i odczyt awarii (core dump) po prawdziwym crashu.
+
+### Alarmy temperatury i powiadomienia push
+
+W konfiguracji (portal lub `set <klucz> <wartość>`) ustaw `alarm_temp_c` (0–80 °C,
+0 wyłącza) i/lub `alarm_rise_c` (0–20 °C, 0 wyłącza). `alarm_rise_h`
+(1–72 h, domyślnie 24) określa czas porównania z historią lokalną. Brak
+wartości z tego czasu oznacza pominięcie oceny wzrostu. Wykorzystywana jest
+ostatnia wartość sprzed czasu docelowego, nie starsza niż dopuszczalna luka
+historii (heartbeat + dwa najdłuższe odstępy pomiarowe + 60 s).
+Próg temperatury ma histerezę 1 °C; błędny odczyt nie kasuje gorącego punktu.
+Ocena następuje przy każdym pomiarze, więc „od razu” oznacza po wykryciu
+podczas pomiaru, a nie ciągłą obserwację w deep sleep.
+
+Nowy alarm otwiera okno Wi-Fi z pominięciem `upload_s` i liczby próbek.
+`alarm_repeat_min` (0–1440, domyślnie 180) określa ponawianie; 0 wyłącza
+powtórzenia. Okna alarmowe nie przesuwają zwykłego harmonogramu. W trybie
+critical automatyczne okno alarmowe czeka na poprawę zasilania.
+Dodatkowe wybudzenia i połączenia Wi-Fi/TLS zużywają energię, zwłaszcza
+przy krótkim okresie powtarzania lub niedostępnej sieci.
+
+`notify_ntfy_url` to adres z tematem, np. `https://ntfy.sh/moj-silos`:
+JSON z tematem jest wysyłany na adres bazowy serwera. Pusty adres wyłącza ntfy.
+Telegram wymaga `notify_tg_token` i `notify_tg_chat`; pusty token przy zapisie
+zachowuje poprzedni, `notify_tg_token_clear=1` usuwa go. Token nie jest
+zwracany w JSON (tylko `notify_tg_token_set`). HTTPS weryfikuje certyfikat.
+Powiadomienia po polsku obejmują początek/ustąpienie alarmu i przejście w
+oszczędzanie baterii. Limit danego typu alarmowego to jedno powiadomienie
+na `alarm_repeat_min`, baterii — jedno na dobę. Kolejka sześciu zdarzeń
+przeżywa deep sleep; przy przepełnieniu wypada najstarsze. Nieudany kanał
+czeka na kolejne okno, udany nie jest powtarzany dla tego samego zdarzenia.
+Stan widoczny jest jako `alarm` w `status`/`diag` i na karcie Przeglądu.
+
+Przycisk testu w Konfiguracji używa zapisanych ustawień; API
+`POST /api/notify/test` wymaga hasła serwisowego i zwraca wynik ntfy i Telegrama.
+Na PC `mock://notify/temat` zapisuje ostatnie 12 wiadomości do
+`/api/diag` → `sim.notifications`; temperaturę ustawia akcja
+`sim action=temp sensor=1 value=40` (portal: `POST /api/sim`).
+
+Zmiana układu `RetainedState` powoduje jednorazową reinicjalizację RTC
+(kontrola rozmiaru i CRC): oczekujące próbki i liczniki zostaną wyzerowane
+przy pierwszym uruchomieniu nowej wersji. Konfiguracja i historia lokalna
+pozostają zachowane. Klucz trwałego zapisu `alarm_repeat_m` jest skrócony
+ze względu na limit 15 znaków klucza NVS; formularze/JSON używają
+`alarm_repeat_min`.
+### Prognoza czasu pracy baterii
+
+Portal i diagnostyka udostępniają `battery_forecast`: orientacyjny czas do
+progu `batt_crit_mv` (domyślnie 3500 mV), bez nowych ustawień. Prognoza wykorzystuje
+ostatnie 7 dni, minimum 4 punkty i dobę danych rozładowania. Pomija ładowanie
+(wzrost ponad 20 mV/h lub napięcie ponad 4150 mV) i luki ponad 6 godzin.
+Tempo jest średnią nachyleń odcinków ważoną czasem; pominięte przyrosty od panelu
+nie przesuwają trendu. Wynik 0–365 dni uwzględnia wiek ostatniego pomiaru.
+Przy zmianach poniżej 5 mV/dobę pokazuje stan stabilny, przy przewadze ładowania
+w ostatniej dobie — ładowanie. Brak wystarczających lub świeżych danych daje
+stan nieznany. Jest to przybliżenie napięciowe, zależne od obciążenia i pogody.
+
+Obliczenia lokalne wykonywane są przy odczycie statusu/diagnostyki, ze stałym
+buforem 169 punktów (ostatni rekord każdej godziny). Wymagają odczytu historii,
+ale nie dodatkowych pomiarów ani transmisji radiowych. Dashboard używa już
+pobranych danych diagnostycznych z wybranego zakresu i domyślnego progu
+3500 mV (kanał nie zawiera ustawionego progu); zakres krótszy niż doba wyświetla
+„za mało danych w zakresie”.

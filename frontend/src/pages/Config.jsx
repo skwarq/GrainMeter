@@ -9,6 +9,12 @@ import { validateNetworkAndPower } from '../lib/power.js';
 import { WifiPicker } from '../components/WifiPicker.jsx';
 
 const TEXT_FIELDS = [
+  'alarm_temp_c',
+  'alarm_rise_c',
+  'alarm_rise_h',
+  'alarm_repeat_min',
+  'notify_ntfy_url',
+  'notify_tg_chat',
   'name',
   'wifi_ssid',
   'report_url',
@@ -30,7 +36,7 @@ const TEXT_FIELDS = [
   'log_port',
   'ap_delay_s',
 ];
-const SECRET_FIELDS = ['wifi_pass', 'ts_key', 'diag_key'];
+const SECRET_FIELDS = ['wifi_pass', 'ts_key', 'diag_key', 'notify_tg_token'];
 
 function fromConfig(c) {
   const f = {};
@@ -58,6 +64,7 @@ export function Config() {
   const { refresh } = useStatus();
   const cfg = useLoad(() => api.getConfig());
   const act = useAction();
+  const notify = useAction();
   const [f, setF] = useState(null);
   const [localErr, setLocalErr] = useState('');
 
@@ -338,6 +345,60 @@ export function Config() {
             </>
           )}
         </p>
+      </Card>
+
+      <Card title={t('alarm.title')} icon="warn">
+        <div class="form-grid">
+          {['alarm_temp_c', 'alarm_rise_c', 'alarm_rise_h', 'alarm_repeat_min'].map((k) => (
+            <Field key={k} label={t('alarm.' + k)}>
+              <input
+                type="number"
+                step={k.endsWith('_c') ? '0.01' : '1'}
+                min={k === 'alarm_rise_h' ? '1' : '0'}
+                max={{ alarm_temp_c: 80, alarm_rise_c: 20, alarm_rise_h: 72, alarm_repeat_min: 1440 }[k]}
+                value={f[k]}
+                onInput={set(k)}
+              />
+            </Field>
+          ))}
+        </div>
+        <p class="hint">{t('alarm.hint')}</p>
+      </Card>
+      <Card title={t('alarm.notify')} icon="upload">
+        <div class="form-grid">
+          <Field label="ntfy URL" hint={t('alarm.ntfyHint')}>
+            <input
+              value={f.notify_ntfy_url}
+              onInput={set('notify_ntfy_url')}
+              maxLength={159}
+              placeholder="https://ntfy.sh/moj-silos"
+            />
+          </Field>
+          <Field label={t('alarm.token')}>
+            <input {...secret('notify_tg_token', c.notify_tg_token_set)} maxLength={95} />
+          </Field>
+          <Field label={t('alarm.chat')}>
+            <input value={f.notify_tg_chat} onInput={set('notify_tg_chat')} maxLength={63} />
+          </Field>
+        </div>
+        <p class="hint">{t('alarm.testHint')}</p>
+        <Button
+          busy={notify.busy}
+          onClick={() =>
+            notify.run(() => api.notifyTest(), {
+              ok: (r) =>
+                ['ntfy', 'telegram']
+                  .map(
+                    (k) =>
+                      k + ': ' + (!r[k].enabled ? t('alarm.disabled') : r[k].ok ? t('common.ok') : t('common.failed')),
+                  )
+                  .join(' · '),
+            })
+          }
+        >
+          {t('alarm.test')}
+        </Button>
+        <Result result={notify.result} />
       </Card>
 
       <Card title={t('config.logs')} icon="diag">

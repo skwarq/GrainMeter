@@ -127,6 +127,13 @@ void udpLogApply(bool enabled, uint32_t level, const char* host, uint16_t port,
   const bool wasEnabled = s_enabled;
   s_enabled = enabled;
   esp_log_level_set("*", enabled ? espLevel(level) : ESP_LOG_INFO);
+  // At debug level the HTTP/TLS stack logs request URLs; the Telegram URL
+  // contains the bot token and UDP logs are broadcast on the LAN.
+  if (enabled && level >= 4) {
+    esp_log_level_set("HTTP_CLIENT", ESP_LOG_INFO);
+    esp_log_level_set("esp-tls", ESP_LOG_INFO);
+    esp_log_level_set("transport_base", ESP_LOG_INFO);
+  }
   if (enabled && !wasEnabled) {
     ESP_LOGI("udplog", "forwarding logs to %s:%u",
              host != nullptr && host[0] != '\0' ? host : "255.255.255.255",

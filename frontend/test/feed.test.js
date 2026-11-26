@@ -360,7 +360,7 @@ test('deviceSummary: time-weighted power modes, failed upload periods', async ()
   assert.equal(deviceSummary({ entries: [] }), null);
 });
 
-test('percent views: battery from the Li-ion curve, signal -90..-50 dBm', async () => {
+test('percent views: battery from the LiPo curve, signal -90..-50 dBm', async () => {
   const { rssiPercent } = await import('../src/lib/format.js');
   const { devicePercentFeed } = await import('../src/lib/feed.js');
   assert.equal(rssiPercent(-50), 100);
@@ -376,6 +376,6 @@ test('percent views: battery from the Li-ion curve, signal -90..-50 dBm', async 
       { t: 2, values: [null, null] },
     ],
   });
-  assert.deepEqual(f.entries[0].values, [25, 50]);
+  assert.deepEqual(f.entries[0].values, [13, 50]); // 3.70 V: between 3.69 V (10 %) and 3.71 V (15 %)
   assert.deepEqual(f.entries[1].values, [null, null]);
 });

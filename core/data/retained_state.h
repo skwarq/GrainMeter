@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "data/alarm_state.h"
 #include "data/measurement.h"
 
 #ifndef GM_BUFFER_CAPACITY
@@ -16,13 +17,29 @@ namespace gm {
 
 enum { kBufferCapacity = GM_BUFFER_CAPACITY };
 
+// Battery voltage at a measurement, waiting for the diagnostic channel.
+struct BatteryPoint {
+  uint32_t epoch;  // UTC seconds; 0 = clock unknown at capture
+  uint32_t monoS;  // monotonic seconds (time reconstruction)
+  uint16_t mv;
+  uint16_t reserved;
+};
+
+// Result of the diagnostic channel write in the last upload window.
+enum DiagResult : uint8_t {
+  DiagNotDue = 0,         // nothing to send this time
+  DiagSent = 1,           // confirmed by ThingSpeak
+  DiagFailed = 2,         // request or confirmation failed
+  DiagNotConfigured = 3,  // no diagnostic channel / key
+};
+
 struct LastUpload {
   uint32_t epoch;  // wall clock of the attempt (0 = unknown)
   uint32_t monoS;
   uint8_t attempted;
-  uint8_t ok;      // main channel write confirmed
-  uint8_t diagOk;  // diagnostic channel write confirmed
-  uint8_t reserved;
+  uint8_t ok;          // main channel write confirmed
+  uint8_t diagOk;      // diagnostic channel write confirmed (= DiagSent)
+  uint8_t diagResult;  // DiagResult
   int16_t httpStatus;  // last HTTP status from main channel, -1 = none
   uint16_t samplesSent;
   uint16_t samplesConfirmed;
@@ -66,6 +83,30 @@ struct RetainedState {
   char updateLatest[33];  // version announced by the manifest
   char updateMessage[127];
 
+  AlarmState alarm;
+
+  // Battery voltage of every measurement (also without sensors), sent in
+  // bulk to the diagnostic channel (field1) in the next upload window.
+  // Wall clock: last successful sync (SNTP or HTTP Date) and correction.
+  uint8_t hasTimeSync;
+  uint8_t timeSource;     // 1 SNTP, 2 HTTP Date
+  int16_t lastClockFixS;  // last Date correction applied (clamped)
+  uint32_t lastTimeSyncMonoS;
+
+  // Charging guess from the battery voltage trend and the frost warning
+  // (LiPo must not be charged below 0 °C; the board cannot stop it).
+  uint16_t prevBattMv;  // previous measurement, 0 = none
+  uint32_t prevBattMonoS;
+  int16_t boardTempCenti;  // chip temperature at the last measurement
+  uint8_t hasBoardTemp;
+  uint8_t charging;
+  uint8_t frostCharging;
+  uint8_t reserved2[3];
+
+  uint16_t battHead;
+  uint16_t battCount;
+  BatteryPoint batt[kBufferCapacity];
+
   uint32_t crc;
 
   // --- helpers (no virtuals: must stay POD-compatible) ---
@@ -84,6 +125,17 @@ struct RetainedState {
   size_t removeUpTo(uint32_t lastSeq);
   // Removes the sample at logical index i (used for time-less samples).
   void removeAt(size_t i);
+
+  BatteryPoint& battAt(size_t i) {
+    return batt[(battHead + i) % kBufferCapacity];
+  }
+  const BatteryPoint& battAt(size_t i) const {
+    return batt[(battHead + i) % kBufferCapacity];
+  }
+  // Appends; when full the oldest point is dropped.
+  void battPush(const BatteryPoint& p);
+  // Removes the n oldest points.
+  void battRemoveFront(size_t n);
 };
 
 static const uint32_t kRetainedMagic = 0x474D5232u;  // "GMR2" (layout v2)

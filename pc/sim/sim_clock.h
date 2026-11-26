@@ -20,6 +20,11 @@ class SimClock : public gm::Clock {
   uint32_t monoS() override;
   bool wallValid() override;
   uint32_t epoch() override;
+  bool setEpoch(uint32_t epoch) override;
+  // Real ("server") time: the device clock is epoch() = true + skew.
+  uint32_t trueEpoch();
+  // Simulated RC drift of the device wall clock (seconds, tests).
+  void setSkewS(int32_t s);
 
   uint64_t monoMs();
   void advanceMs(uint64_t ms);
@@ -41,6 +46,7 @@ class SimClock : public gm::Clock {
   uint64_t offsetMs_;
   std::chrono::steady_clock::time_point base_;
   uint32_t baseEpoch_;
+  int64_t skewS_ = 0;
 };
 
 }  // namespace gmpc

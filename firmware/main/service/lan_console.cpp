@@ -316,18 +316,10 @@ bool lanOffer(const LanAnnounce& a, uint32_t windowMs) {
   const int64_t end =
       esp_timer_get_time() + static_cast<int64_t>(windowMs) * 1000;
   while (esp_timer_get_time() < end) {
-    if (acceptClient()) {
-      // Only a logged-in client holds the device awake (a port scan or a
-      // silent connection must not).
-      const int64_t authEnd = esp_timer_get_time() + 3000000;
-      while (s_active && !s_authed && esp_timer_get_time() < authEnd) {
-        vTaskDelay(pdMS_TO_TICKS(20));
-      }
-      if (s_authed) return true;
-      lanSessionEnd("auth");
-      lanServerClose();
-      return false;
-    }
+    // Do not wait for the login here: the caller may hold the device lock
+    // (upload window) that the password check needs. The main loop waits
+    // while lanClientConnected() and holds the device only once logged in.
+    if (acceptClient()) return true;
     vTaskDelay(pdMS_TO_TICKS(20));
   }
   lanServerClose();
@@ -345,6 +337,8 @@ void lanPoll(const LanAnnounce& a, uint32_t helloEveryMs) {
 }
 
 bool lanSessionActive() { return s_active && s_authed; }
+
+bool lanClientConnected() { return s_active; }
 
 void lanSessionEnd(const char* reason) {
   if (!s_active) return;

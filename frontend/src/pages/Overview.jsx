@@ -2,7 +2,7 @@ import { useI18n, tOr } from '../components/i18n.js';
 import { useStatus, useTick } from '../components/hooks.js';
 import { Card, Badge, Meter, Loading, Icon, KV, PageHead } from '../components/ui.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
-import { batteryPercent, batteryLevel } from '../lib/battery.js';
+import { batteryPercent, batteryLevel, batteryForecastText } from '../lib/battery.js';
 import { formatDuration, formatClock, formatEpoch, rssiBars } from '../lib/format.js';
 import { pointState, formatTemp, tempColor, tempStats } from '../lib/temp.js';
 import { POINT_COUNT } from '../lib/silo.js';
@@ -92,6 +92,31 @@ export function Overview() {
           <a href="#/config">{t('nav.config')} →</a>
         </p>
       )}
+      {s.power && s.power.frost_charging && (
+        <p class="notice notice-warn" role="alert">
+          <Icon name="warn" size={18} />
+          <span>
+            {t('power.frostCharging', {
+              temp: typeof s.power.board_temp_c === 'number' ? s.power.board_temp_c.toFixed(1) : '?',
+            })}
+          </span>
+        </p>
+      )}
+      {s.alarm && (
+        <Card title={t('alarm.title')} icon="warn">
+          <Badge tone={s.alarm.active ? 'danger' : 'ok'}>{t(s.alarm.active ? 'alarm.active' : 'alarm.quiet')}</Badge>
+          {s.alarm.active && (
+            <p>
+              {t('alarm.detail', {
+                point: s.alarm.point,
+                temp: formatTemp(s.alarm.temp_c),
+                rise: formatTemp(s.alarm.rise_c),
+              })}{' '}
+              · {t('alarm.' + s.alarm.reason)}
+            </p>
+          )}
+        </Card>
+      )}
       <div class="overview">
         <Card
           class="silo-card"
@@ -152,6 +177,8 @@ export function Overview() {
               {typeof s.battery_mv === 'number' ? (s.battery_mv / 1000).toFixed(3) + ' V' : t('common.unknown')}
               {level === 'low' || level === 'critical' ? ' · ' + t('overview.battLow') : ''}
             </p>
+            <p class="small">{batteryForecastText(s.battery_forecast, t)}</p>
+            {s.power && s.power.charging && <p class="small">{t('power.charging')}</p>}
             {s.power && (
               <p class="small">
                 <Badge tone={powerTone(s.power.mode)}>{tOr(t, 'power.', s.power.mode)}</Badge>{' '}

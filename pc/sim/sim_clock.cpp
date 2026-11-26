@@ -38,7 +38,25 @@ bool SimClock::wallValid() {
 
 uint32_t SimClock::epoch() {
   std::lock_guard<std::mutex> lock(mu_);
+  return static_cast<uint32_t>(baseEpoch_ + nowLocked() / 1000u + skewS_);
+}
+
+uint32_t SimClock::trueEpoch() {
+  std::lock_guard<std::mutex> lock(mu_);
   return baseEpoch_ + static_cast<uint32_t>(nowLocked() / 1000u);
+}
+
+bool SimClock::setEpoch(uint32_t epoch) {
+  std::lock_guard<std::mutex> lock(mu_);
+  skewS_ = static_cast<int64_t>(epoch) -
+           static_cast<int64_t>(baseEpoch_ + nowLocked() / 1000u);
+  synced_ = true;
+  return true;
+}
+
+void SimClock::setSkewS(int32_t s) {
+  std::lock_guard<std::mutex> lock(mu_);
+  skewS_ = s;
 }
 
 void SimClock::advanceMs(uint64_t ms) {

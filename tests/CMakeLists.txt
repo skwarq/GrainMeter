@@ -24,11 +24,15 @@ function(gm_add_test_binary name)
 endfunction()
 
 gm_add_test_binary(gm_unit_tests
+  unit/test_notifications.cpp
+  unit/test_alarm.cpp
   unit/test_onewire.cpp
   unit/test_ds18b20.cpp
   unit/test_rommap.cpp
   unit/test_retained_state.cpp
   unit/test_thingspeak.cpp
+  unit/test_http_date.cpp
+  unit/test_battery_forecast.cpp
   unit/test_scheduler.cpp
   unit/test_config.cpp
   unit/test_ota.cpp
@@ -39,6 +43,7 @@ gm_add_test_binary(gm_unit_tests
 )
 
 gm_add_test_binary(gm_integration_tests
+  integration/test_battery_forecast.cpp
   integration/test_upload.cpp
   integration/test_portal.cpp
   integration/test_scenario.cpp

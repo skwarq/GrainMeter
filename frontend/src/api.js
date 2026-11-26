@@ -218,6 +218,7 @@ export const wifiJoin = (form) => post('/api/wifi/join', form);
 /** {state: idle|pending|running|ok|failed, ssid, message, ip, rssi} */
 export const getWifiJoin = (signal) => request('GET', '/api/wifi/join', { signal, timeout: 4000 });
 export const measure = (store) => post('/api/measure', store ? { store: 1 } : null, SLOW_TIMEOUT_MS);
+export const notifyTest = () => post('/api/notify/test', null, 90000);
 export const uploadNow = () => post('/api/upload', null, 90000);
 /** Remote update: read the manifest now / download, verify and install. */
 export const remoteUpdateCheck = () => post('/api/update/check', null, 60000);

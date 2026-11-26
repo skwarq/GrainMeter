@@ -33,7 +33,10 @@ void lanPoll(const LanAnnounce& a, uint32_t helloEveryMs);
 // Stops listening (an open session is not affected).
 void lanServerClose();
 
+// Logged-in session (holds the device awake).
 bool lanSessionActive();
+// Any client connected, possibly still logging in (at most 10 s).
+bool lanClientConnected();
 // Ends the session from outside ("BYE <reason>").
 void lanSessionEnd(const char* reason);
 

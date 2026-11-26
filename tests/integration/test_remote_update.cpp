@@ -236,7 +236,7 @@ TEST_F(RemoteUpdateTest, ServiceWindowRequestedOncePerId) {
 TEST_F(RemoteUpdateTest, LowBatterySkipsUpdateAndCriticalStopsRadio) {
   const auto img = fakeImage(150000, 0x000D, "grainmeter", "9.9.9");
   publish("9.9.9", img, hexSha(img));
-  sim("action=battery&value=3400");  // economy
+  sim("action=battery&value=3600");  // economy (< 3650)
   t.runFor(4 * 3600 + 1800);
   EXPECT_EQ(code(), gm::RemoteUpdateResult::Skipped) << result();
   EXPECT_STREQ(t.dev->ota().runningSlot(), "ota_0");
@@ -249,12 +249,14 @@ TEST_F(RemoteUpdateTest, LowBatterySkipsUpdateAndCriticalStopsRadio) {
   EXPECT_GT(t.dev->app().state().count, 4u);             // still measuring
 }
 
-TEST_F(RemoteUpdateTest, EveryWindowSyncsTimeAndUsesOneSession) {
+TEST_F(RemoteUpdateTest, OneSessionPerWindowDateKeepsTheClock) {
   configure("update_check_h=0");
   t.runFor(3 * 3600);
   const unsigned windows = t.dev->network().connectCount();
   EXPECT_EQ(windows, 3u);
-  EXPECT_EQ(t.dev->network().syncCount(), windows);  // RC clock drift
+  // SNTP once; afterwards the HTTP Date of the ThingSpeak replies keeps the
+  // drifting RC clock right.
+  EXPECT_EQ(t.dev->network().syncCount(), 1u);
   EXPECT_EQ(t.dev->http().sessionCount(), windows);
 }
 

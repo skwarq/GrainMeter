@@ -127,8 +127,8 @@ class PowerTest : public ::testing::Test {
 TEST_F(PowerTest, ModesFromThresholds) {
   EXPECT_EQ(gm::powerModeFor(-1, cfg), gm::PowerMode::Normal);  // unknown
   EXPECT_EQ(gm::powerModeFor(3900, cfg), gm::PowerMode::Normal);
-  EXPECT_EQ(gm::powerModeFor(3400, cfg), gm::PowerMode::Economy);
-  EXPECT_EQ(gm::powerModeFor(3200, cfg), gm::PowerMode::Critical);
+  EXPECT_EQ(gm::powerModeFor(3600, cfg), gm::PowerMode::Economy);   // < 3650
+  EXPECT_EQ(gm::powerModeFor(3400, cfg), gm::PowerMode::Critical);  // < 3500
   cfg.battLowMv = 0;
   cfg.battCritMv = 0;
   EXPECT_EQ(gm::powerModeFor(3000, cfg), gm::PowerMode::Normal);  // disabled

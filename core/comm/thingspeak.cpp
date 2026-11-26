@@ -103,6 +103,11 @@ bool tsBuildBulk(const RetainedState& st, size_t maxEntries,
       }
       char status[160];
       writeStatusText(s, status, sizeof(status));
+      if (st.alarm.active) {
+        const size_t len = strlen(status);
+        snprintf(status + len, sizeof(status) - len, " alarm=%s",
+                 st.alarm.reason == AlarmTemp ? "temp" : "rise");
+      }
       w.kv("status", status).endObject();
       if (w.ok()) {
         if (n == 0) {
@@ -144,6 +149,59 @@ bool tsBuildDiag(const DiagValues& d, const char* writeKey, uint32_t nowEpoch,
       .kvu("field8", d.wakeCount)
       .kv("status", d.status != nullptr ? d.status : "")
       .endObject();
+  w.endArray().endObject();
+  return w.ok();
+}
+
+static void writeDiagFields(JsonWriter& w, const DiagValues& d) {
+  if (d.batteryMv >= 0) {
+    w.kv("field1", static_cast<int64_t>(d.batteryMv));
+  }
+  if (d.rssi != 0) {
+    w.kv("field2", static_cast<int64_t>(d.rssi));
+  }
+  w.kvu("field3", d.sensorsFound)
+      .kvu("field4", d.sensorErrors)
+      .kvu("field5", d.buffered)
+      .kvu("field6", d.dropped)
+      .kvu("field7", d.uploadFailures)
+      .kvu("field8", d.wakeCount)
+      .kv("status", d.status != nullptr ? d.status : "");
+}
+
+bool tsBuildDiagBulk(const RetainedState& st, const DiagValues* full,
+                     const char* writeKey, uint32_t nowEpoch, uint32_t nowMonoS,
+                     char* out, size_t cap, size_t* points) {
+  *points = 0;
+  JsonWriter w(out, cap);
+  w.beginObject().kv("write_api_key", writeKey).key("updates").beginArray();
+  char tbuf[kTsTimeBufLen];
+  uint32_t prev = 0;
+  for (size_t i = 0; i < st.battCount; ++i) {
+    const BatteryPoint& p = st.battAt(i);
+    uint32_t ts = p.epoch;
+    if (ts == 0 && nowEpoch != 0 && nowMonoS >= p.monoS &&
+        nowMonoS - p.monoS < nowEpoch) {
+      ts = nowEpoch - (nowMonoS - p.monoS);
+    }
+    ++*points;  // consumed even when skipped (no time): never sendable
+    // The full row carries the current voltage; created_at must be unique.
+    if (ts == 0 || ts <= prev || (full != nullptr && ts + 1 >= nowEpoch)) {
+      continue;
+    }
+    prev = ts;
+    tsFormatTime(ts, tbuf, sizeof(tbuf));
+    w.beginObject()
+        .kv("created_at", tbuf)
+        .kv("field1", static_cast<int64_t>(p.mv))
+        .endObject();
+  }
+  if (full != nullptr) {
+    tsFormatTime(nowEpoch, tbuf, sizeof(tbuf));
+    w.beginObject().kv("created_at", tbuf);
+    writeDiagFields(w, *full);
+    w.endObject();
+  }
   w.endArray().endObject();
   return w.ok();
 }

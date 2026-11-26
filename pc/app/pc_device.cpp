@@ -30,6 +30,7 @@ PcDevice::PcDevice(const Options& opt)
       resetReason_("power-on") {
   std::memset(&retained_, 0xA5, sizeof(retained_));  // RTC RAM after power-up
   clock_.setSynced(opt.wallClockAtStart);
+  http_.setClock(&clock_);
 }
 
 static std::string randomPassword() {
@@ -225,6 +226,7 @@ void PcDevice::writePlatformJson(gm::JsonWriter& w, bool detailed) {
       .kvu("time_syncs", net_.syncCount())
       .kvu("http_sessions", http_.sessionCount())
       .kvb("tls", pcTlsEnabled());
+  if (detailed) http_.writeNotifyJson(w);
   probe_.writeJson(w);
   (void)detailed;
   w.endObject();
@@ -308,6 +310,14 @@ bool PcDevice::simAction(const gm::Form& f, char* msg, size_t cap) {
     batteryOverrideMv_ = static_cast<int>(mv);
     std::snprintf(msg, cap, "battery %s",
                   mv == 0 ? "follows the simulated curve" : value);
+  } else if (std::strcmp(action, "board_temp") == 0) {
+    long c = 0;
+    if (!f.getInt("value", -40, 85, &c)) {
+      std::snprintf(msg, cap, "usage: board_temp value=-40..85 (C)");
+      return false;
+    }
+    boardTempCenti_ = static_cast<int>(c * 100);
+    std::snprintf(msg, cap, "board temperature %ld C", c);
   } else if (std::strcmp(action, "ota_fail_boot") == 0) {
     ota_.setFailNextBoot(on);
     std::snprintf(msg, cap, "next new image fails its first start: %s",

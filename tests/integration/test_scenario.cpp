@@ -65,7 +65,17 @@ TEST(Scenario, ConfigureMeasureBufferUploadRecover) {
   EXPECT_LT(st.count, 4u);
   EXPECT_TRUE(st.last.ok);
   EXPECT_EQ(st.droppedOverflow, 0u);
-  // diagnostics channel: first window + once per diag_every_h (6 h) = 2
-  EXPECT_EQ(t.dev->mock().entries(2002003).size(), 2u);
+  // diagnostics channel: full row in the first window + once per
+  // diag_every_h (6 h) = 2; battery points of the measurements in between.
+  size_t fullRows = 0, batteryRows = 0;
+  for (const auto& e : t.dev->mock().entries(2002003)) {
+    if (e.values.count("field3")) {
+      ++fullRows;
+    } else if (e.values.count("field1")) {
+      ++batteryRows;
+    }
+  }
+  EXPECT_EQ(fullRows, 2u);
+  EXPECT_GT(batteryRows, 20u);
   web.stop();
 }

@@ -252,6 +252,13 @@ void EspSystemPort::writeCrash(gm::JsonWriter& w) {
   w.endObject();
 }
 
+bool EspSystemPort::boardTempCenti(int16_t* out) {
+  float t = 0;
+  if (!chipTempC(&t)) return false;
+  *out = static_cast<int16_t>(t * 100.0f);
+  return true;
+}
+
 void EspSystemPort::configApplied(const gm::Config& cfg) {
   udpLogApply(cfg.logUdp != 0, cfg.logLevel, cfg.logHost,
               static_cast<uint16_t>(cfg.logPort), apSsid);

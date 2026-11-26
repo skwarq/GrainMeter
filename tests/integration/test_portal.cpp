@@ -54,8 +54,10 @@ TEST_F(PortalTest, StatusIsJsonWithoutSecrets) {
   EXPECT_EQ(r->status, 200);
   EXPECT_EQ(r->get_header_value("Content-Type"), "application/json");
   EXPECT_NE(r->body.find("\"platform\":\"pc-sim\""), std::string::npos);
+  EXPECT_NE(r->body.find("\"battery_forecast\":{"), std::string::npos);
   auto d = cli->Get("/api/diag");
   ASSERT_TRUE(d);
+  EXPECT_NE(d->body.find("\"battery_forecast\":{"), std::string::npos);
   EXPECT_EQ(d->body.find("test-password"), std::string::npos);
   EXPECT_EQ(d->body.find("SIMULATEDKEY"), std::string::npos);
   EXPECT_EQ(d->body.find("simulated-wifi-pass"), std::string::npos);
@@ -296,4 +298,90 @@ TEST_F(PortalTest, UdpLogSettingsSurviveRestart) {
             std::string::npos)
       << cfg;
   EXPECT_EQ(post("/api/crash/clear", "")->status, 400);  // PC: no core dump
+}
+
+TEST_F(PortalTest, AlarmImmediateUploadAndNotifications) {
+  ASSERT_EQ(post("/api/config",
+                 "alarm_temp_c=30&alarm_repeat_min=0&notify_ntfy_url=mock://"
+                 "notify/silo")
+                ->status,
+            200);
+  ASSERT_EQ(post("/api/automap", "")->status, 200);
+  ASSERT_EQ(post("/api/sim", "action=temp&sensor=1&value=40")->status, 200);
+  // Only one sample: the ordinary hourly/four-sample window is not due.
+  t.dev->tick();
+  auto d = cli->Get("/api/diag");
+  ASSERT_TRUE(d);
+  EXPECT_NE(d->body.find("\"active\":true"), std::string::npos);
+  EXPECT_NE(d->body.find("\"mock_entries_main\":1"), std::string::npos);
+  EXPECT_NE(d->body.find("alarm temperatury"), std::string::npos);
+  EXPECT_NE(d->body.find("\"topic\":\"silo\""), std::string::npos);
+  EXPECT_NE(t.dev->mock().entries(1000001).at(0).values.at("status").find(
+                "alarm=temp"),
+            std::string::npos);
+  // The forced window must leave the ordinary upload schedule untouched.
+  EXPECT_FALSE(t.dev->app().state().hasUploadAttempt);
+  ASSERT_EQ(post("/api/sim", "action=temp&sensor=1&value=28")->status, 200);
+  ASSERT_EQ(post("/api/sim", "action=advance&seconds=900")->status, 200);
+  t.dev->tick();
+  ASSERT_EQ(post("/api/upload", "")->status, 200);
+  d = cli->Get("/api/diag");
+  ASSERT_TRUE(d);
+  EXPECT_NE(d->body.find("alarm ustąpił"), std::string::npos);
+  EXPECT_FALSE(t.dev->app().state().alarm.active);
+}
+
+TEST_F(PortalTest, NotifyTestNeedsPasswordAndReportsChannels) {
+  auto r = post("/api/notify/test", "", false);
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 401);
+  ASSERT_EQ(post("/api/config", "notify_ntfy_url=mock://notify/test")->status,
+            200);
+  r = post("/api/notify/test", "");
+  ASSERT_TRUE(r);
+  EXPECT_EQ(r->status, 200);
+  EXPECT_NE(r->body.find("\"ntfy\":{\"enabled\":true,\"ok\":true"),
+            std::string::npos);
+  EXPECT_NE(r->body.find("\"telegram\":{\"enabled\":false"), std::string::npos);
+  auto d = cli->Get("/api/diag");
+  ASSERT_TRUE(d);
+  EXPECT_NE(d->body.find("test powiadomienia"), std::string::npos);
+}
+
+TEST_F(PortalTest, FrostChargingWarning) {
+  post("/api/automap", "");
+  ASSERT_EQ(post("/api/sim", "action=board_temp&value=-5")->status, 200);
+  post("/api/sim", "action=battery&value=3800");
+  post("/api/measure", "store=1");
+  t.dev->clock().advanceMs(900000);
+  post("/api/sim", "action=battery&value=3830");  // +30 mV in 15 min
+  post("/api/measure", "store=1");
+  std::string s = cli->Get("/api/status")->body;
+  EXPECT_NE(s.find("\"charging\":true,\"frost_charging\":true"),
+            std::string::npos)
+      << s;
+  EXPECT_NE(s.find("\"board_temp_c\":-5"), std::string::npos);
+  EXPECT_NE(s.find("LiPo must not be charged below 0 C"), std::string::npos);
+  EXPECT_GE(t.dev->app().state().alarm.count, 1u);  // queued notification
+  // Warmer again: the warning clears.
+  post("/api/sim", "action=board_temp&value=10");
+  t.dev->clock().advanceMs(900000);
+  post("/api/sim", "action=battery&value=3860");
+  post("/api/measure", "store=1");
+  s = cli->Get("/api/status")->body;
+  EXPECT_NE(s.find("\"frost_charging\":false"), std::string::npos) << s;
+}
+
+TEST_F(PortalTest, NoChargingGuessWhenDischarging) {
+  post("/api/automap", "");
+  post("/api/sim", "action=board_temp&value=-5");
+  post("/api/sim", "action=battery&value=3800");
+  post("/api/measure", "store=1");
+  t.dev->clock().advanceMs(900000);
+  post("/api/sim", "action=battery&value=3795");
+  post("/api/measure", "store=1");
+  const std::string s = cli->Get("/api/status")->body;
+  EXPECT_NE(s.find("\"charging\":false,\"frost_charging\":false"),
+            std::string::npos)
+      << s;
 }

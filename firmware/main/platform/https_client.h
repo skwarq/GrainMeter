@@ -24,6 +24,9 @@ class HttpsClient : public gm::HttpClient {
                                    uint32_t timeoutMs, gm::HttpResult* res);
   void dropConnection();
   int64_t openGet(esp_http_client_handle_t c, gm::HttpResult* res);
+  // Date header of the current response (clock correction), 0 = none.
+  static esp_err_t onEvent(esp_http_client_event_t* evt);
+  uint32_t dateEpoch_ = 0;
 
   esp_http_client_handle_t client_ = nullptr;
   char host_[96] = "";

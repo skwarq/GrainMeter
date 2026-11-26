@@ -58,6 +58,14 @@ struct DiagValues {
 bool tsBuildDiag(const DiagValues& d, const char* writeKey, uint32_t nowEpoch,
                  char* out, size_t cap);
 
+// Diagnostic channel in bulk: one entry per buffered battery point
+// (created_at = measurement time, field1 = mV) plus, when `full` is set, the
+// complete diagnostic row at nowEpoch. Points without a reconstructable time
+// are skipped. *points = battery entries written (the oldest ones).
+bool tsBuildDiagBulk(const RetainedState& st, const DiagValues* full,
+                     const char* writeKey, uint32_t nowEpoch, uint32_t nowMonoS,
+                     char* out, size_t cap, size_t* points);
+
 // URL "<base>/channels/<id>/bulk_update.json"
 bool tsBulkUrl(const char* base, uint32_t channelId, char* out, size_t cap);
 

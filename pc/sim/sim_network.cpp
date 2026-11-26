@@ -8,6 +8,8 @@
 #include <fstream>
 #include <sstream>
 
+#include "util/http_date.h"
+
 namespace gmpc {
 
 bool SimNetwork::connect(const gm::Config& cfg, uint32_t timeoutMs, char* err,
@@ -59,6 +61,7 @@ bool SimNetwork::syncTime(uint32_t timeoutMs) {
   ++syncs_;
   clock_.sleepMs(300);
   clock_.setSynced(true);
+  clock_.setEpoch(clock_.trueEpoch());  // SNTP removes any drift
   return true;
 }
 
@@ -70,6 +73,11 @@ const char* SimNetwork::stateText() {
 }
 
 std::string PcHttpClient::lastUrl() { return lastUrl_; }
+void PcHttpClient::writeNotifyJson(gm::JsonWriter& w) {
+  w.key("notifications").beginArray();
+  for (const auto& message : notifications_) w.raw(message.c_str());
+  w.endArray();
+}
 
 namespace {
 
@@ -127,15 +135,27 @@ gm::HttpResult PcHttpClient::postJson(const char* url, const char* body,
   res.transportOk = false;
   res.status = -1;
   res.error[0] = '\0';
+  res.serverEpoch = 0;
   ++posts_;
-  lastUrl_ = url;
+  lastUrl_ = std::strncmp(url, "https://api.telegram.org/bot", 28) == 0
+                 ? "https://api.telegram.org/[redacted]"
+                 : url;
   std::string reply;
   int status = -1;
 
-  if (std::strncmp(url, "mock://", 7) == 0) {
+  if (std::strncmp(url, "mock://notify", 13) == 0 &&
+      (url[13] == '/' || url[13] == 0)) {
+    if (notifications_.size() == 12) notifications_.pop_front();
+    notifications_.push_back(std::string(body, len));
+    status = 200;
+    reply = "{\"ok\":true}";
+  } else if (std::strncmp(url, "mock://", 7) == 0) {
     const char* path = std::strchr(url + 7, '/');
     status = mock_.handle(path != nullptr ? path : "/", std::string(body, len),
                           &reply);
+    if (clock_ != nullptr) {
+      res.serverEpoch = clock_->trueEpoch();  // like ThingSpeak's Date header
+    }
   } else {
     std::string origin, path;
     if (!networkUrl(url, &origin, &path, &res)) {
@@ -151,6 +171,7 @@ gm::HttpResult PcHttpClient::postJson(const char* url, const char* body,
     }
     status = r->status;
     reply = r->body;
+    gm::parseHttpDate(r->get_header_value("Date").c_str(), &res.serverEpoch);
   }
 
   if (lostResponse_) {
@@ -171,6 +192,7 @@ static gm::HttpResult emptyResult() {
   res.transportOk = false;
   res.status = -1;
   res.error[0] = '\0';
+  res.serverEpoch = 0;
   return res;
 }
 

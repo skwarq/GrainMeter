@@ -21,6 +21,7 @@ class EspSystemPort : public gm::SystemPort {
                       size_t cap) override;
   const char* rejectedFirmware() override { return rejected_; }
   void configApplied(const gm::Config& cfg) override;
+  bool boardTempCenti(int16_t* out) override;
 
   // Shared with the main loop.
   std::atomic<bool> restart{false};

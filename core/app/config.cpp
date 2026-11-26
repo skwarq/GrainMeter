@@ -33,8 +33,10 @@ void configDefaults(Config* cfg, const char* defaultReportUrl,
   cfg->measureIntervalS = kDefaultMeasureS;
   cfg->uploadIntervalS = kDefaultUploadS;
   cfg->diagEveryH = 6;
-  cfg->battLowMv = 3450;   // Li-ion ~15 %: economy mode
-  cfg->battCritMv = 3300;  // ~5 %: measure only, no radio
+  // AKYGA LP475085 LiPo (docs/hardware.md): ~8 % / ~4 %. Critical stops the
+  // radio before Wi-Fi current peaks can brown the board out in the cold.
+  cfg->battLowMv = 3650;   // economy mode
+  cfg->battCritMv = 3500;  // measure only, no radio
   cfg->updateCheckH = 24;
   cfg->logUdp = 0;
   cfg->logLevel = 3;
@@ -42,6 +44,8 @@ void configDefaults(Config* cfg, const char* defaultReportUrl,
   cfg->lanWake = 1;
   cfg->apEnabled = 1;
   cfg->apDelayS = 60;
+  cfg->alarmRiseH = 24;
+  cfg->alarmRepeatMin = 180;
   copyStr(cfg->updateUrl, sizeof(cfg->updateUrl),
           defaultUpdateUrl != nullptr ? defaultUpdateUrl : "");
 }
@@ -88,6 +92,49 @@ static bool validUrl(const char* s, bool allowInsecure, size_t maxLen = 95) {
   }
   return allowInsecure &&
          (strncmp(s, "http://", 7) == 0 || strncmp(s, "mock://", 7) == 0);
+}
+
+// A topic URL has one path component; JSON publishing goes to the origin.
+static bool validNtfy(const char* s, bool insecure) {
+  if (!s[0]) return true;
+  if (!validUrl(s, insecure, 159)) return false;
+  const char* scheme = strstr(s, "://");
+  const char* path = strchr(scheme + 3, '/');
+  return path && path > scheme + 3 && path[1] &&
+         strpbrk(path + 1, "/?#") == nullptr && strchr(s, '@') == nullptr;
+}
+
+static bool validToken(const char* s) {
+  if (!*s) return true;
+  if (!strchr(s, ':') || strlen(s) > 95) return false;
+  for (; *s; ++s) {
+    if (!((*s >= '0' && *s <= '9') || (*s >= 'a' && *s <= 'z') ||
+          (*s >= 'A' && *s <= 'Z') || *s == ':' || *s == '_' || *s == '-'))
+      return false;
+  }
+  return true;
+}
+
+static bool parseCenti(const char* s, uint32_t max, uint32_t* out) {
+  uint32_t whole = 0, frac = 0, digits = 0;
+  if (*s < '0' || *s > '9') return false;
+  while (*s >= '0' && *s <= '9') {
+    whole = whole * 10 + static_cast<unsigned>(*s++ - '0');
+    if (whole > max) return false;
+  }
+  if (*s == '.') {
+    ++s;
+    while (*s >= '0' && *s <= '9' && digits < 2) {
+      frac = frac * 10 + static_cast<unsigned>(*s++ - '0');
+      ++digits;
+    }
+    if (!digits) return false;
+  }
+  if (*s) return false;
+  if (digits == 1) frac *= 10;
+  if (whole * 100 + frac > max * 100) return false;
+  *out = whole * 100 + frac;
+  return true;
 }
 
 bool parseIpv4(const char* s, uint8_t out[4]) {
@@ -144,7 +191,7 @@ static void setErr(char* err, size_t cap, const char* msg) {
 bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
                      char* err, size_t errCap) {
   Config next = *cfg;
-  char v[128];
+  char v[192];
 
   if (form.has("name")) {
     if (!form.get("name", v, sizeof(v)) ||
@@ -268,6 +315,9 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
     const char* msg;
   };
   const U32Field2 more[] = {
+      {"alarm_rise_h", &next.alarmRiseH, 1, 72, "alarm_rise_h: 1..72"},
+      {"alarm_repeat_min", &next.alarmRepeatMin, 0, 1440,
+       "alarm_repeat_min: 0..1440"},
       {"diag_every_h", &next.diagEveryH, 0, 168, "diag_every_h: 0..168"},
       {"batt_low_mv", &next.battLowMv, 0, 4500,
        "batt_low_mv: 0 (off) or 2500..4500"},
@@ -335,6 +385,43 @@ bool configApplyForm(const Form& form, const ConfigLimits& limits, Config* cfg,
     }
     copyStr(ips[i].dst, 16, v);
   }
+  const struct {
+    const char* key;
+    uint32_t* dst;
+    uint32_t max;
+  } temps[] = {{"alarm_temp_c", &next.alarmTempCenti, 80},
+               {"alarm_rise_c", &next.alarmRiseCenti, 20}};
+  for (const auto& f : temps) {
+    if (form.has(f.key) &&
+        (!form.get(f.key, v, sizeof(v)) || !parseCenti(v, f.max, f.dst))) {
+      setErr(err, errCap, "alarm temperature out of range");
+      return false;
+    }
+  }
+  if (form.has("notify_ntfy_url")) {
+    if (!form.get("notify_ntfy_url", v, sizeof(v)) ||
+        !validNtfy(v, limits.allowInsecureUrl)) {
+      setErr(err, errCap, "notify_ntfy_url: empty or server/topic URL");
+      return false;
+    }
+    copyStr(next.notifyNtfyUrl, sizeof(next.notifyNtfyUrl), v);
+  }
+  if (form.has("notify_tg_token")) {
+    if (!form.get("notify_tg_token", v, sizeof(v)) || !validToken(v)) {
+      setErr(err, errCap, "notify_tg_token: invalid token");
+      return false;
+    }
+    if (*v) copyStr(next.notifyTgToken, sizeof(next.notifyTgToken), v);
+  }
+  if (form.has("notify_tg_token_clear")) next.notifyTgToken[0] = 0;
+  if (form.has("notify_tg_chat")) {
+    if (!form.get("notify_tg_chat", v, sizeof(v)) ||
+        !validText(v, 0, 63, false)) {
+      setErr(err, errCap, "notify_tg_chat: invalid chat id");
+      return false;
+    }
+    copyStr(next.notifyTgChat, sizeof(next.notifyTgChat), v);
+  }
   if (form.has("log_host")) {
     if (!form.get("log_host", v, sizeof(v)) || strlen(v) > 15 ||
         !validIpOrEmpty(v)) {
@@ -369,9 +456,13 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
     const char* key;
     char* dst;
     size_t cap;
-    int kind;  // 0 text, 1 secret text, 2 api key, 3 url, 4 url/empty, 5 ip
+    int kind;  // 0 text, 1 secret, 2 API key, 3 URL, 4 URL/empty, 5 IP, 6 ntfy,
+               // 7 token
   };
   const TextKey texts[] = {
+      {"notify_ntfy_url", cfg->notifyNtfyUrl, sizeof(cfg->notifyNtfyUrl), 6},
+      {"notify_tg_token", cfg->notifyTgToken, sizeof(cfg->notifyTgToken), 7},
+      {"notify_tg_chat", cfg->notifyTgChat, sizeof(cfg->notifyTgChat), 0},
       {"name", cfg->deviceName, sizeof(cfg->deviceName), 0},
       {"wifi_ssid", cfg->wifiSsid, sizeof(cfg->wifiSsid), 0},
       {"wifi_pass", cfg->wifiPass, sizeof(cfg->wifiPass), 1},
@@ -392,6 +483,12 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
     }
     bool valid;
     switch (texts[i].kind) {
+      case 6:
+        valid = validNtfy(v, true);
+        break;
+      case 7:
+        valid = validToken(v);
+        break;
       case 2:
         valid = v[0] == '\0' || validKey(v);
         break;
@@ -426,6 +523,8 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
       {"diag_channel", &cfg->diagChannelId, 0, 99999999u},
       {"measure_s", &cfg->measureIntervalS, 1, kMaxIntervalS},
       {"upload_s", &cfg->uploadIntervalS, kMinUploadS, kMaxIntervalS},
+      {"alarm_rise_h", &cfg->alarmRiseH, 1, 72},
+      {"alarm_repeat_m", &cfg->alarmRepeatMin, 0, 1440},
       {"diag_every_h", &cfg->diagEveryH, 0, 168},
       {"batt_low_mv", &cfg->battLowMv, 0, 4500},
       {"batt_crit_mv", &cfg->battCritMv, 0, 4500},
@@ -444,6 +543,18 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
       *err = "stored configuration value invalid; default kept";
     }
   }
+  const struct {
+    const char* key;
+    uint32_t* dst;
+    uint32_t max;
+  } temps[] = {{"alarm_temp_c", &cfg->alarmTempCenti, 80},
+               {"alarm_rise_c", &cfg->alarmRiseCenti, 20}};
+  for (const auto& f : temps) {
+    if (store.get(f.key, v, sizeof(v)) && !parseCenti(v, f.max, f.dst)) {
+      ok = false;
+      *err = "stored alarm temperature invalid; default kept";
+    }
+  }
   if (cfg->uploadIntervalS < cfg->measureIntervalS) {
     cfg->uploadIntervalS = cfg->measureIntervalS;
     ok = false;
@@ -459,6 +570,17 @@ bool configLoad(KeyValueStore& store, Config* cfg, RomMap* map,
 bool configSave(KeyValueStore& store, const Config& cfg) {
   char num[16];
   bool ok = true;
+  ok = store.set("notify_ntfy_url", cfg.notifyNtfyUrl) && ok;
+  ok = store.set("notify_tg_token", cfg.notifyTgToken) && ok;
+  ok = store.set("notify_tg_chat", cfg.notifyTgChat) && ok;
+  snprintf(num, sizeof(num), "%u.%02u",
+           static_cast<unsigned>(cfg.alarmTempCenti / 100),
+           static_cast<unsigned>(cfg.alarmTempCenti % 100));
+  ok = store.set("alarm_temp_c", num) && ok;
+  snprintf(num, sizeof(num), "%u.%02u",
+           static_cast<unsigned>(cfg.alarmRiseCenti / 100),
+           static_cast<unsigned>(cfg.alarmRiseCenti % 100));
+  ok = store.set("alarm_rise_c", num) && ok;
   ok = store.set("name", cfg.deviceName) && ok;
   ok = store.set("wifi_ssid", cfg.wifiSsid) && ok;
   ok = store.set("wifi_pass", cfg.wifiPass) && ok;
@@ -481,6 +603,7 @@ bool configSave(KeyValueStore& store, const Config& cfg) {
     const char* key;
     uint32_t value;
   } nums[] = {
+      {"alarm_rise_h", cfg.alarmRiseH}, {"alarm_repeat_m", cfg.alarmRepeatMin},
       {"diag_every_h", cfg.diagEveryH}, {"batt_low_mv", cfg.battLowMv},
       {"batt_crit_mv", cfg.battCritMv}, {"update_check_h", cfg.updateCheckH},
       {"log_udp", cfg.logUdp},          {"log_level", cfg.logLevel},
@@ -510,6 +633,15 @@ bool romMapSave(KeyValueStore& store, const RomMap& map) {
 
 void configWriteJson(JsonWriter& w, const Config& cfg) {
   w.beginObject()
+      .key("alarm_temp_c")
+      .centi(static_cast<int16_t>(cfg.alarmTempCenti))
+      .key("alarm_rise_c")
+      .centi(static_cast<int16_t>(cfg.alarmRiseCenti))
+      .kvu("alarm_rise_h", cfg.alarmRiseH)
+      .kvu("alarm_repeat_min", cfg.alarmRepeatMin)
+      .kv("notify_ntfy_url", cfg.notifyNtfyUrl)
+      .kvb("notify_tg_token_set", cfg.notifyTgToken[0] != 0)
+      .kv("notify_tg_chat", cfg.notifyTgChat)
       .kv("name", cfg.deviceName)
       .kv("wifi_ssid", cfg.wifiSsid)
       .kvb("wifi_pass_set", cfg.wifiPass[0] != '\0')

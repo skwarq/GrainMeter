@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "app/battery_forecast.h"
 #include "app/config.h"
 #include "app/platform.h"
 #include "app/scheduler.h"
@@ -26,6 +27,18 @@ namespace gm {
 enum {
   kWifiConnectTimeoutMs = 20000,
   kTimeSyncTimeoutMs = 10000,
+  // SNTP only when the clock is unknown or no SNTP/HTTP Date sync for a
+  // day: every HTTPS reply from ThingSpeak corrects the drift for free.
+  kTimeSyncEveryS = 86400,
+  kClockFixMinS = 2,  // smaller Date offsets are rounding, not drift
+  // Charging guess: voltage up by >= 8 mV and >= 20 mV/h between measurements
+  // (the charger raises the cell voltage; ADC noise is ~5 mV after averaging).
+  kChargeRiseMinMv = 8,
+  kChargeRiseMvPerH = 20,
+  // Frost warning on/off at the board temperature (hysteresis); the chip runs
+  // a little warmer than the cell, hence the margin above 0 °C.
+  kFrostOnCenti = 200,
+  kFrostOffCenti = 400,
   kHttpTimeoutMs = 15000,
   kMaxUploadBatch = kBufferCapacity,   // << 960 (ThingSpeak free limit)
   kFirmwareDownloadTimeoutMs = 30000,  // per network operation
@@ -75,7 +88,8 @@ class GrainMeter {
   const MeasureReport& measure(bool store);
   // One upload window: Wi-Fi up, time, bulk write, diagnostic write, Wi-Fi
   // down. Buffer entries are removed only after a confirmed write.
-  const LastUpload& upload();
+  const LastUpload& upload(bool alarmWindow = false);
+  void notifyTest(JsonWriter& w);
 
   // Runs whatever the schedule says is due. allowUpload=false keeps the
   // radio untouched (service mode). Returns seconds until next measurement.
@@ -138,6 +152,8 @@ class GrainMeter {
       ;
 
  private:
+  void writeAlarm(JsonWriter& w);
+  void sendNotifications();
   void writeMeasure(JsonWriter& w);
   void writeScan(JsonWriter& w);
   void writeBuffer(JsonWriter& w);
@@ -147,7 +163,15 @@ class GrainMeter {
   void writeRemoteUpdate(JsonWriter& w);
   bool diagDue(uint32_t nowMono) const;
   bool updateCheckDue(uint32_t nowMono) const;
-  void sendDiag(uint32_t nowEpoch);
+  // Battery points in bulk, plus the full diagnostic row when `full`.
+  void sendDiag(uint32_t nowEpoch, uint32_t nowMono, bool full);
+  bool timeSyncDue(uint32_t nowMono) const;
+  // Updates the charging guess and raises the frost-charging warning.
+  void checkCharging(int mv, uint32_t monoS);
+  void noteTimeSync(uint8_t source);
+  // Corrects the wall clock from a verified HTTPS reply (Date header).
+  void adjustClock(const HttpResult& r);
+  void writeClock(JsonWriter& w);
   // install = false: only reads the manifest and reports what is available.
   // manual (portal buttons): does not touch the periodic schedule and does
   // not consume a remote service request (the technician is already here);
@@ -190,6 +214,9 @@ class GrainMeter {
   char joinMsg_[96] = "";
   char joinIp_[16] = "";
   int joinRssi_ = 0;
+  // Battery forecast from the history, reused for 10 min (status polling).
+  BatteryForecast forecast_;
+  uint32_t forecastAt_ = 0;
   PowerMode powerMode_;
   OtaSession ota_;
   HistoryLog history_;

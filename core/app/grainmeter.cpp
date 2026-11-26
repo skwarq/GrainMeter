@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app/alarm.h"
+#include "app/battery_forecast.h"
+#include "app/notifications.h"
 #include "comm/thingspeak.h"
 #include "onewire/ds18b20.h"
 #include "ota/remote_update.h"
@@ -179,6 +182,18 @@ const MeasureReport& GrainMeter::measure(bool store) {
     const uint32_t prevMono = st_->lastMeasureMonoS;
     st_->hasMeasured = 1;
     st_->lastMeasureMonoS = m.monoS;
+    // Battery at every measurement, also without sensors: diagnostic channel
+    // field1 in bulk (statistics on ThingSpeak).
+    const int mv = p_.sys->batteryMv();
+    if (mv > 0) {
+      BatteryPoint bp;
+      memset(&bp, 0, sizeof(bp));
+      bp.epoch = m.epoch;
+      bp.monoS = m.monoS;
+      bp.mv = static_cast<uint16_t>(mv > 65535 ? 65535 : mv);
+      st_->battPush(bp);
+      checkCharging(mv, m.monoS);
+    }
     if (map_.size() == 0) {
       GM_LOGW(kTag, "no sensors mapped to points: sample not stored");
     } else {
@@ -221,6 +236,8 @@ const MeasureReport& GrainMeter::measure(bool store) {
     }
     st_->seal();
   }
+  alarmEvaluate(st_->alarm, cfg_, m, history_, historyMaxGapS());
+  st_->seal();
   return m;
 }
 
@@ -319,7 +336,22 @@ void GrainMeter::finishUpload(bool ok, int status, const char* msg) {
   st_->seal();
 }
 
-const LastUpload& GrainMeter::upload() {
+const LastUpload& GrainMeter::upload(bool alarmWindow) {
+  const uint8_t prevAttempt = st_->hasUploadAttempt;
+  const uint32_t prevMono = st_->lastUploadAttemptMonoS;
+  if (alarmWindow) {
+    AlarmState& a = st_->alarm;
+    if (!a.pendingWindow && a.active) {
+      NotifyEvent e = {
+          p_.clock->epoch(), p_.clock->monoS(), a.centi, a.riseCenti,
+          NotifyAlarm,       a.reason,          a.point, 0};
+      alarmEnqueue(a, e);
+    }
+    a.pendingWindow = 0;
+    a.hasWindow = 1;
+    a.lastWindowMonoS = p_.clock->monoS();
+  }
+  if (!alarmWindow) st_->alarm.samplesSentSinceRegular = 0;
   LastUpload& L = st_->last;
   memset(&L, 0, sizeof(L));
   L.attempted = 1;
@@ -327,9 +359,13 @@ const LastUpload& GrainMeter::upload() {
   L.monoS = p_.clock->monoS();
   st_->hasUploadAttempt = 1;
   st_->lastUploadAttemptMonoS = L.monoS;
+  if (alarmWindow) {
+    st_->hasUploadAttempt = prevAttempt;
+    st_->lastUploadAttemptMonoS = prevMono;
+  }
   st_->seal();
 
-  if (!cfg_.uploadConfigured()) {
+  if (!cfg_.uploadConfigured() && !notificationsConfigured(cfg_)) {
     finishUpload(false, -1, "reporting not configured (channel / write key)");
     return L;
   }
@@ -349,10 +385,17 @@ const LastUpload& GrainMeter::upload() {
     finishUpload(false, -1, msg);
     return L;
   }
-  // Sync the clock in every window: the RTC runs from the internal RC
-  // oscillator (no 32 kHz crystal on the FireBeetle 2 C6) and drifts. A
-  // failed sync is fatal only if the clock was never set.
-  if (!p_.net->syncTime(kTimeSyncTimeoutMs) && !p_.clock->wallValid()) {
+  // The RTC runs from the internal RC oscillator (no 32 kHz crystal on the
+  // FireBeetle 2 C6) and drifts; the HTTP Date of every ThingSpeak reply
+  // corrects it (adjustClock), SNTP runs only when the clock is unknown or
+  // no sync succeeded for a day. A failed sync is fatal only if the clock
+  // was never set.
+  bool timeOk = !timeSyncDue(p_.clock->monoS());
+  if (!timeOk) {
+    timeOk = p_.net->syncTime(kTimeSyncTimeoutMs);
+    if (timeOk) noteTimeSync(1);
+  }
+  if (!timeOk && !p_.clock->wallValid()) {
     p_.http->endSession();
     p_.net->disconnect();
     // A heartbeat window without samples has nothing to fail with.
@@ -362,6 +405,8 @@ const LastUpload& GrainMeter::upload() {
                                 : "time sync failed (no samples)");
     return L;
   }
+  // TLS certificate validity checks need the synchronised wall clock.
+  sendNotifications();
   const uint32_t nowEpoch = p_.clock->epoch();
   const uint32_t nowMono = p_.clock->monoS();
   L.epoch = nowEpoch;
@@ -371,7 +416,7 @@ const LastUpload& GrainMeter::upload() {
   bool mainOk = true;
   int mainStatus = -1;
   char msg[96] = "no samples to send";
-  if (st_->count > 0) {
+  if (st_->count > 0 && cfg_.uploadConfigured()) {
     BulkInfo info;
     if (!tsBulkUrl(cfg_.reportUrl, cfg_.channelId, url, sizeof(url)) ||
         !tsBuildBulk(*st_, kMaxUploadBatch, cfg_.writeKey, nowEpoch, nowMono,
@@ -383,6 +428,7 @@ const LastUpload& GrainMeter::upload() {
       const HttpResult res =
           p_.http->postJson(url, bodyBuf_, strlen(bodyBuf_), kHttpTimeoutMs,
                             respBuf_, sizeof(respBuf_));
+      adjustClock(res);
       const TsOutcome out =
           tsParseResponse(res.transportOk, res.status, respBuf_);
       mainStatus = res.status;
@@ -390,6 +436,12 @@ const LastUpload& GrainMeter::upload() {
       if (out == TsOutcome::Confirmed) {
         const size_t removed = st_->removeUpTo(info.lastSeq);
         L.samplesConfirmed = static_cast<uint16_t>(removed);
+        if (alarmWindow) {
+          const size_t total = st_->alarm.samplesSentSinceRegular + removed;
+          st_->alarm.samplesSentSinceRegular = static_cast<uint16_t>(
+              total > kBufferCapacity ? static_cast<size_t>(kBufferCapacity)
+                                      : total);
+        }
         ++st_->uploadOkCount;
         snprintf(msg, sizeof(msg), "%u sample(s) confirmed (seq %lu..%lu)",
                  static_cast<unsigned>(removed),
@@ -408,9 +460,12 @@ const LastUpload& GrainMeter::upload() {
     }
   }
 
-  if (cfg_.diagChannelId != 0 && cfg_.diagWriteKey[0] != '\0' &&
-      diagDue(nowMono)) {
-    sendDiag(nowEpoch);
+  if (cfg_.diagChannelId == 0 || cfg_.diagWriteKey[0] == '\0') {
+    L.diagResult = DiagNotConfigured;
+  } else if (st_->battCount > 0 || diagDue(nowMono)) {
+    sendDiag(nowEpoch, nowMono, diagDue(nowMono));
+  } else {
+    L.diagResult = DiagNotDue;
   }
   if (cfg_.remoteUpdateEnabled() && updateCheckDue(nowMono)) {
     checkRemoteUpdate(true, false, "");
@@ -428,6 +483,95 @@ bool GrainMeter::diagDue(uint32_t nowMono) const {
   return nowMono - st_->lastDiagMonoS + 60u >= cfg_.diagEveryH * 3600u;
 }
 
+void GrainMeter::checkCharging(int mv, uint32_t monoS) {
+  int16_t t = 0;
+  if (p_.sys->boardTempCenti(&t)) {
+    st_->boardTempCenti = t;
+    st_->hasBoardTemp = 1;
+  }
+  if (st_->prevBattMv != 0 && monoS > st_->prevBattMonoS) {
+    const int dv = mv - static_cast<int>(st_->prevBattMv);
+    const uint32_t dt = monoS - st_->prevBattMonoS;
+    if (dv >= kChargeRiseMinMv &&
+        static_cast<int64_t>(dv) * 3600 >=
+            static_cast<int64_t>(kChargeRiseMvPerH) * dt) {
+      st_->charging = 1;
+    } else if (dv <= -kChargeRiseMinMv) {
+      st_->charging = 0;  // falling again: discharging
+    }  // flat: keep (constant-voltage phase near 4.2 V)
+  }
+  st_->prevBattMv = static_cast<uint16_t>(mv);
+  st_->prevBattMonoS = monoS;
+  const bool cold = st_->hasBoardTemp && st_->boardTempCenti <= kFrostOnCenti;
+  const bool warm = !st_->hasBoardTemp || st_->boardTempCenti >= kFrostOffCenti;
+  if (st_->charging && cold && !st_->frostCharging) {
+    st_->frostCharging = 1;
+    recordError(
+        "charging at %d.%d C: LiPo must not be charged below 0 C",
+        st_->boardTempCenti / 100,
+        (st_->boardTempCenti < 0 ? -st_->boardTempCenti : st_->boardTempCenti) /
+            10 % 10);
+    NotifyEvent e;
+    memset(&e, 0, sizeof(e));
+    e.epoch = p_.clock->wallValid() ? p_.clock->epoch() : 0;
+    e.monoS = monoS;
+    e.centi = st_->boardTempCenti;
+    e.type = NotifyFrostCharge;
+    alarmEnqueue(st_->alarm, e);
+  } else if (st_->frostCharging && (!st_->charging || warm)) {
+    st_->frostCharging = 0;
+  }
+}
+
+bool GrainMeter::timeSyncDue(uint32_t nowMono) const {
+  return !p_.clock->wallValid() || !st_->hasTimeSync ||
+         nowMono < st_->lastTimeSyncMonoS ||
+         nowMono - st_->lastTimeSyncMonoS >= kTimeSyncEveryS;
+}
+
+void GrainMeter::noteTimeSync(uint8_t source) {
+  st_->hasTimeSync = 1;
+  st_->timeSource = source;
+  st_->lastTimeSyncMonoS = p_.clock->monoS();
+  st_->seal();
+}
+
+void GrainMeter::adjustClock(const HttpResult& r) {
+  if (!r.transportOk || r.serverEpoch == 0) {
+    return;
+  }
+  if (p_.clock->wallValid()) {
+    const int64_t diff = static_cast<int64_t>(r.serverEpoch) -
+                         static_cast<int64_t>(p_.clock->epoch());
+    if (diff >= kClockFixMinS || diff <= -kClockFixMinS) {
+      if (!p_.clock->setEpoch(r.serverEpoch)) {
+        return;
+      }
+      st_->lastClockFixS = static_cast<int16_t>(diff > 32767    ? 32767
+                                                : diff < -32767 ? -32767
+                                                                : diff);
+      GM_LOGI(kTag, "clock corrected by %+ld s (HTTP Date)",
+              static_cast<long>(diff));
+    }
+  } else if (!p_.clock->setEpoch(r.serverEpoch)) {
+    return;
+  }
+  noteTimeSync(2);
+}
+
+void GrainMeter::writeClock(JsonWriter& w) {
+  const uint32_t now = p_.clock->monoS();
+  w.key("clock").beginObject().kv("source", !st_->hasTimeSync      ? "none"
+                                            : st_->timeSource == 2 ? "http_date"
+                                                                   : "sntp");
+  if (st_->hasTimeSync && now >= st_->lastTimeSyncMonoS) {
+    w.kvu("sync_age_s", now - st_->lastTimeSyncMonoS);
+  } else {
+    w.key("sync_age_s").null();
+  }
+  w.kv("last_fix_s", static_cast<int64_t>(st_->lastClockFixS)).endObject();
+}
+
 bool GrainMeter::updateCheckDue(uint32_t nowMono) const {
   if (!st_->hasUpdateCheck || nowMono < st_->lastUpdateCheckMonoS) {
     return true;
@@ -435,7 +579,7 @@ bool GrainMeter::updateCheckDue(uint32_t nowMono) const {
   return nowMono - st_->lastUpdateCheckMonoS + 60u >= cfg_.updateCheckH * 3600u;
 }
 
-void GrainMeter::sendDiag(uint32_t nowEpoch) {
+void GrainMeter::sendDiag(uint32_t nowEpoch, uint32_t nowMono, bool full) {
   LastUpload& L = st_->last;
   DiagValues d;
   d.batteryMv = p_.sys->batteryMv();
@@ -457,22 +601,31 @@ void GrainMeter::sendDiag(uint32_t nowEpoch) {
            p_.sys->wakeReason(), powerModeName(powerMode_));
   d.status = status;
   char url[160];
+  size_t points = 0;
   if (!tsBulkUrl(cfg_.reportUrl, cfg_.diagChannelId, url, sizeof(url)) ||
-      !tsBuildDiag(d, cfg_.diagWriteKey, nowEpoch, bodyBuf_,
-                   sizeof(bodyBuf_))) {
+      !tsBuildDiagBulk(*st_, full ? &d : nullptr, cfg_.diagWriteKey, nowEpoch,
+                       nowMono, bodyBuf_, sizeof(bodyBuf_), &points)) {
+    L.diagResult = DiagFailed;
+    recordError("diagnostic channel: request too large");
     return;
   }
   respBuf_[0] = '\0';
   const HttpResult res =
       p_.http->postJson(url, bodyBuf_, strlen(bodyBuf_), kHttpTimeoutMs,
                         respBuf_, sizeof(respBuf_));
+  adjustClock(res);
   L.diagOk = tsParseResponse(res.transportOk, res.status, respBuf_) ==
                      TsOutcome::Confirmed
                  ? 1
                  : 0;
+  L.diagResult = L.diagOk ? DiagSent : DiagFailed;
   if (L.diagOk) {
-    st_->hasDiag = 1;
-    st_->lastDiagMonoS = p_.clock->monoS();
+    st_->battRemoveFront(points);
+    if (full) {
+      st_->hasDiag = 1;
+      st_->lastDiagMonoS = p_.clock->monoS();
+    }
+    st_->seal();
   } else {
     recordError("diagnostic channel: HTTP %d", res.status);
   }
@@ -715,6 +868,21 @@ void GrainMeter::checkRemoteUpdate(bool install, bool manual,
 
 uint32_t GrainMeter::runDue(bool allowUpload) {
   const PowerMode mode = powerModeFor(p_.sys->batteryMv(), cfg_);
+  if (static_cast<uint8_t>(mode) != st_->alarm.powerMode) {
+    st_->alarm.powerMode = static_cast<uint8_t>(mode);
+    if (mode != PowerMode::Normal) {
+      NotifyEvent e = {p_.clock->wallValid() ? p_.clock->epoch() : 0,
+                       p_.clock->monoS(),
+                       static_cast<int16_t>(p_.sys->batteryMv()),
+                       0,
+                       NotifyBattery,
+                       static_cast<uint8_t>(mode),
+                       0,
+                       0};
+      alarmEnqueue(st_->alarm, e);
+    }
+    st_->seal();
+  }
   if (mode != powerMode_) {
     GM_LOGW(kTag, "power mode %s -> %s", powerModeName(powerMode_),
             powerModeName(mode));
@@ -725,10 +893,28 @@ uint32_t GrainMeter::runDue(bool allowUpload) {
     measure(true);
     plan = schedulePlan(*st_, cfg_, p_.clock->monoS(), powerMode_);
   }
-  if (allowUpload && plan.uploadDue) {
-    upload();
+  const bool alarmDue = alarmWindowDue(st_->alarm, cfg_, p_.clock->monoS());
+  if (allowUpload && powerMode_ != PowerMode::Critical &&
+      (plan.uploadDue || alarmDue)) {
+    // Mark the alarm window even if it coincides with the regular schedule.
+    upload(alarmDue);
+    if (plan.uploadDue && alarmDue) {
+      st_->alarm.samplesSentSinceRegular = 0;
+      st_->hasUploadAttempt = 1;
+      st_->lastUploadAttemptMonoS = st_->last.monoS;
+      st_->seal();
+    }
   }
-  return schedulePlan(*st_, cfg_, p_.clock->monoS(), powerMode_).sleepS;
+  uint32_t sleep =
+      schedulePlan(*st_, cfg_, p_.clock->monoS(), powerMode_).sleepS;
+  if (allowUpload && powerMode_ != PowerMode::Critical && st_->alarm.active &&
+      cfg_.alarmRepeatMin && st_->alarm.hasWindow) {
+    const uint32_t age = p_.clock->monoS() - st_->alarm.lastWindowMonoS;
+    const uint32_t interval = cfg_.alarmRepeatMin * 60u;
+    const uint32_t wait = age >= interval ? 1 : interval - age;
+    if (wait < sleep) sleep = wait;
+  }
+  return sleep;
 }
 
 // ---------------------------------------------------------------- config ----
@@ -1049,12 +1235,37 @@ void GrainMeter::writeLastUpload(JsonWriter& w) {
   w.beginObject()
       .kvb("ok", L.ok != 0)
       .kvb("diag_ok", L.diagOk != 0)
+      .kv("diag", L.diagResult == DiagSent            ? "sent"
+                  : L.diagResult == DiagFailed        ? "failed"
+                  : L.diagResult == DiagNotConfigured ? "not_configured"
+                                                      : "not_due")
       .kv("http_status", static_cast<int64_t>(L.httpStatus))
       .kvu("epoch", L.epoch)
       .kvu("age_s", p_.clock->monoS() - L.monoS)
       .kvu("samples_sent", L.samplesSent)
       .kvu("samples_confirmed", L.samplesConfirmed)
       .kv("message", L.message)
+      .endObject();
+}
+
+void GrainMeter::writeAlarm(JsonWriter& w) {
+  const AlarmState& a = st_->alarm;
+  w.key("alarm")
+      .beginObject()
+      .kvb("active", a.active != 0)
+      .kv("reason", alarmReasonName(a.reason))
+      .kvu("point", a.point)
+      .key("temp_c")
+      .centi(a.centi)
+      .key("rise_c")
+      .centi(a.riseCenti)
+      .kvu("start_epoch", a.startEpoch)
+      .kvu("start_mono_s", a.startMonoS)
+      .kvu("last_notify_mono_s", a.lastNotifyMonoS)
+      .kvu("last_window_mono_s", a.lastWindowMonoS)
+      .kvb("pending_window", a.pendingWindow != 0)
+      .kvu("pending_events", a.count)
+      .kvu("dropped_events", a.dropped)
       .endObject();
 }
 
@@ -1066,7 +1277,15 @@ void GrainMeter::writePower(JsonWriter& w) {
   } else {
     w.key("battery_mv").null();
   }
-  w.kvu("low_mv", cfg_.battLowMv).kvu("crit_mv", cfg_.battCritMv).endObject();
+  w.kvu("low_mv", cfg_.battLowMv).kvu("crit_mv", cfg_.battCritMv);
+  w.kvb("charging", st_->charging != 0)
+      .kvb("frost_charging", st_->frostCharging != 0);
+  if (st_->hasBoardTemp) {
+    w.key("board_temp_c").centi(st_->boardTempCenti);
+  } else {
+    w.key("board_temp_c").null();
+  }
+  w.endObject();
 }
 
 void GrainMeter::writeRemoteUpdate(JsonWriter& w) {
@@ -1116,6 +1335,49 @@ void GrainMeter::writeErrors(JsonWriter& w) {
   w.endArray();
 }
 
+// One latest sample per UTC hour bounds memory to 169 points (about 1.4 KiB).
+static void writeBatteryForecast(JsonWriter& w, HistoryLog& history,
+                                 uint32_t now, uint32_t crit,
+                                 BatteryForecast* cache, uint32_t* cachedAt) {
+  struct Hourly {
+    BatterySample pts[169] = {};
+    size_t n = 0;
+    static bool visit(void* ctx, const HistoryRecord& r) {
+      Hourly& h = *static_cast<Hourly*>(ctx);
+      if (!r.batteryMv) return true;
+      if (h.n && h.pts[h.n - 1].epoch / 3600 == r.epoch / 3600) {
+        h.pts[h.n - 1] = {r.epoch, r.batteryMv};
+      } else if (h.n < 169)
+        h.pts[h.n++] = {r.epoch, r.batteryMv};
+      return true;
+    }
+  } h;
+  // status is polled by the portal every few seconds: scanning 7 days of
+  // flash history each time is too slow, so the result is reused for 10 min
+  // (or until the clock jumps back).
+  BatteryForecast f;
+  if (now != 0 && *cachedAt != 0 && now >= *cachedAt && now - *cachedAt < 600) {
+    f = *cache;
+  } else if (now && history.available() &&
+             history.forEach(now > 604800 ? now - 604800 : 0, now,
+                             Hourly::visit, &h)) {
+    // batt_crit_mv = 0 disables the critical mode, not the forecast.
+    f = batteryForecast(h.pts, h.n, now, crit != 0 ? crit : 3500);
+    *cache = f;
+    *cachedAt = now;
+  }
+  const char* states[] = {"unknown", "discharging", "charging", "stable"};
+  w.key("battery_forecast").beginObject().kv("state", states[f.state]);
+  w.key("days");
+  if (f.days < 0)
+    w.null();
+  else
+    w.num(f.days);
+  w.kv("slope_mv_per_day", f.slopeMvPerDay)
+      .kvu("samples", f.samples)
+      .endObject();
+}
+
 void GrainMeter::writeStatus(JsonWriter& w) {
   const uint32_t now = p_.clock->monoS();
   const Plan plan = schedulePlan(*st_, cfg_, now, powerMode_);
@@ -1154,7 +1416,11 @@ void GrainMeter::writeStatus(JsonWriter& w) {
   writeMeasure(w);
   writeBuffer(w);
   writeLastUpload(w);
+  writeAlarm(w);
   writePower(w);
+  writeBatteryForecast(w, history_,
+                       p_.clock->wallValid() ? p_.clock->epoch() : 0,
+                       cfg_.battCritMv, &forecast_, &forecastAt_);
   writeRemoteUpdate(w);
   writeErrors(w);
   w.key("history").beginObject().kvb("available", history_.available());
@@ -1228,7 +1494,12 @@ void GrainMeter::writeDiag(JsonWriter& w) {
   writeMeasure(w);
   writeBuffer(w);
   writeLastUpload(w);
+  writeAlarm(w);
   writePower(w);
+  writeClock(w);
+  writeBatteryForecast(w, history_,
+                       p_.clock->wallValid() ? p_.clock->epoch() : 0,
+                       cfg_.battCritMv, &forecast_, &forecastAt_);
   writeRemoteUpdate(w);
   writeErrors(w);
   w.key("history");

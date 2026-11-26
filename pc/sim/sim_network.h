@@ -3,6 +3,7 @@
 #define GM_PC_SIM_NETWORK_H
 
 #include <atomic>
+#include <deque>
 #include <memory>
 #include <string>
 
@@ -73,6 +74,9 @@ class PcHttpClient : public gm::HttpClient {
   unsigned postCount() const { return posts_; }
   unsigned sessionCount() const { return sessions_; }
   std::string lastUrl();
+  void writeNotifyJson(gm::JsonWriter& w);
+  // Mock replies carry the simulator's true time as HTTP Date.
+  void setClock(SimClock* clock) { clock_ = clock; }
 
  private:
   bool readUpdateFile(const char* url, std::string* out, gm::HttpResult* res);
@@ -83,6 +87,8 @@ class PcHttpClient : public gm::HttpClient {
   std::atomic<unsigned> posts_;
   std::atomic<unsigned> sessions_;
   std::string lastUrl_;
+  std::deque<std::string> notifications_;
+  SimClock* clock_ = nullptr;
 };
 
 // True when built with GM_PC_TLS (https:// to real servers allowed).

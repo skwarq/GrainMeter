@@ -1,6 +1,32 @@
 // Polish UI texts (default language). Keep keys in sync with en.js
 // (checked by test/i18n.test.js).
 export default {
+  'alarm.title': 'Alarm temperatury',
+  'alarm.alarm_temp_c': 'Próg temperatury (°C, 0 = wyłączony)',
+  'alarm.alarm_rise_c': 'Próg wzrostu (°C, 0 = wyłączony)',
+  'alarm.alarm_rise_h': 'Okno wzrostu (godziny)',
+  'alarm.alarm_repeat_min': 'Powtarzanie (minuty, 0 = bez powtórzeń)',
+  'alarm.hint':
+    'Ocena po pomiarze. Histereza progu: 1 °C. Wzrost wymaga historii z podanego czasu. Alarm otwiera Wi-Fi od razu, poza trybem critical.',
+  'alarm.notify': 'Powiadomienia push',
+  'alarm.ntfyHint': 'Adres serwera z tematem, np. https://ntfy.sh/moj-silos. Pusty = wyłączone.',
+  'alarm.token': 'Token bota Telegram',
+  'alarm.chat': 'Telegram chat_id',
+  'alarm.testHint': 'Test używa zapisanej konfiguracji. Najpierw zapisz zmiany.',
+  'alarm.test': 'Wyślij test',
+  'alarm.disabled': 'wyłączony',
+  'alarm.active': 'Aktywny',
+  'alarm.quiet': 'Brak alarmu',
+  'alarm.detail': 'Punkt {point}: {temp}, wzrost {rise}',
+  'alarm.temp': 'Próg temperatury',
+  'alarm.rise': 'Wzrost temperatury',
+  'batteryForecast.title': 'Prognoza baterii',
+  'batteryForecast.discharging': 'wystarczy na ~{days} dni',
+  'batteryForecast.charging': 'ładuje się',
+  'batteryForecast.stable': 'stabilna',
+  'batteryForecast.unknown': 'za mało danych',
+  'batteryForecast.range': 'za mało danych w zakresie',
+
   'app.subtitle': 'Portal serwisowy',
   'app.nav': 'Nawigacja',
   'app.switchLang': 'Switch to English',
@@ -147,6 +173,13 @@ export default {
   'config.ssid': 'Nazwa sieci (SSID)',
   'config.wifiPass': 'Hasło Wi-Fi',
   'config.wifiOpen': 'Sieć otwarta (usuń zapisane hasło Wi-Fi)',
+  'power.frostCharging':
+    'Akumulator ładuje się przy ok. {temp} °C (temperatura płytki). Ogniwa LiPo nie wolno ładować poniżej 0 °C – odłącz panel albo przenieś ogniwo w cieplejsze miejsce.',
+  'power.charging': 'Ładowanie (napięcie rośnie między pomiarami).',
+  'upload.diag.sent': 'wysłana',
+  'upload.diag.failed': 'błąd',
+  'upload.diag.not_due': 'nie w tym oknie',
+  'upload.diag.not_configured': 'nieskonfigurowany',
   'config.apDelay': 'Start SoftAP po [s]',
   'config.apDelayHint':
     'W trybie serwisowym urządzenie najpierw łączy się z siecią Wi-Fi; SoftAP z captive portalem startuje dopiero, gdy przez ten czas się nie uda. 0 = od razu.',

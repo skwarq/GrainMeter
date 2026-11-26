@@ -34,7 +34,7 @@ measure_s=
 upload_s=
 # Kanał diagnostyczny co N godzin (domyślnie 6, 0 = przy każdej wysyłce)
 diag_every_h=
-# Progi baterii w mV (domyślnie 3450 / 3300, 0 = wyłączone)
+# Progi baterii w mV (domyślnie 3650 / 3500 dla LiPo AKYGA LP475085, 0 = wyłączone)
 batt_low_mv=
 batt_crit_mv=
 # Zdalna aktualizacja: adres manifestu i okres sprawdzania w godzinach

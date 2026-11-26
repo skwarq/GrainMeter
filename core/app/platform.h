@@ -24,6 +24,11 @@ class Clock {
   // UTC wall clock, valid only after SNTP (ESP32) or simulated sync (PC).
   virtual bool wallValid() = 0;
   virtual uint32_t epoch() = 0;
+  // Sets the wall clock (HTTP Date correction). false = not supported.
+  virtual bool setEpoch(uint32_t epoch) {
+    (void)epoch;
+    return false;
+  }
 };
 
 // One access point found by a Wi-Fi scan.
@@ -61,9 +66,10 @@ class Network {
 };
 
 struct HttpResult {
-  bool transportOk;  // request sent and a status line received
-  int status;        // HTTP status, -1 if none
-  char error[64];    // transport error text (never contains secrets)
+  bool transportOk;      // request sent and a status line received
+  int status;            // HTTP status, -1 if none
+  char error[64];        // transport error text (never contains secrets)
+  uint32_t serverEpoch;  // HTTP Date header of the response, 0 = none
 };
 
 // Receives a streamed download (remote firmware update).
@@ -114,6 +120,12 @@ class SystemPort {
   // Version of a firmware that failed its first boot and was rolled back
   // ("" if none). Remote updates never retry that version.
   virtual const char* rejectedFirmware() { return ""; }
+  // Board temperature in 1/100 °C (ESP32: chip sensor right after wake, close
+  // to the enclosure temperature). false = not available.
+  virtual bool boardTempCenti(int16_t* out) {
+    (void)out;
+    return false;
+  }
   // Called after the configuration was loaded or changed (ESP32: UDP log
   // forwarding, LAN console wake). Runs with the application lock held.
   virtual void configApplied(const Config& cfg) { (void)cfg; }

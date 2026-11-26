@@ -65,6 +65,14 @@ struct Config {
   uint32_t apEnabled;
   uint32_t apDelayS;
 
+  uint32_t alarmTempCenti;
+  uint32_t alarmRiseCenti;
+  uint32_t alarmRiseH;
+  uint32_t alarmRepeatMin;
+  char notifyNtfyUrl[160];
+  char notifyTgToken[96];  // secret
+  char notifyTgChat[64];
+
   bool uploadConfigured() const {
     return channelId != 0 && writeKey[0] != '\0' && reportUrl[0] != '\0';
   }

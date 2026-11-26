@@ -260,6 +260,10 @@ bool Portal::handle(const PortalRequest& req, PortalReply* r) {
     JsonWriter w(out_, sizeof(out_));
     app_.writeStatus(w);
     reply(r, w.ok() ? 200 : 500);
+  } else if (is(req, "POST", "/api/notify/test")) {
+    JsonWriter w(out_, sizeof(out_));
+    app_.notifyTest(w);
+    reply(r, w.ok() ? 200 : 500);
   } else if (is(req, "POST", "/api/upload")) {
     const LastUpload& L = app_.upload();
     JsonWriter w(out_, sizeof(out_));

@@ -7,6 +7,7 @@ set(GM_CORE_SOURCES
   ${GM_CORE_DIR}/util/form.cpp
   ${GM_CORE_DIR}/util/log.cpp
   ${GM_CORE_DIR}/util/sha256.cpp
+  ${GM_CORE_DIR}/util/http_date.cpp
   ${GM_CORE_DIR}/util/json_read.cpp
   ${GM_CORE_DIR}/onewire/rom.cpp
   ${GM_CORE_DIR}/onewire/onewire.cpp
@@ -16,7 +17,10 @@ set(GM_CORE_SOURCES
   ${GM_CORE_DIR}/data/history_log.cpp
   ${GM_CORE_DIR}/comm/thingspeak.cpp
   ${GM_CORE_DIR}/comm/dns_reply.cpp
+  ${GM_CORE_DIR}/app/alarm.cpp
+  ${GM_CORE_DIR}/app/notifications.cpp
   ${GM_CORE_DIR}/app/config.cpp
+  ${GM_CORE_DIR}/app/battery_forecast.cpp
   ${GM_CORE_DIR}/app/scheduler.cpp
   ${GM_CORE_DIR}/app/grainmeter.cpp
   ${GM_CORE_DIR}/app/portal.cpp

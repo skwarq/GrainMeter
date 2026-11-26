@@ -11,4 +11,5 @@ class EspClock : public gm::Clock {
   uint32_t monoS() override;
   bool wallValid() override;
   uint32_t epoch() override;
+  bool setEpoch(uint32_t epoch) override;
 };

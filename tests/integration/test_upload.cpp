@@ -34,7 +34,24 @@ TEST(Upload, HourlyBatchOfFourSamples) {
   const auto entries = t.dev->mock().entries(kMain);
   EXPECT_EQ(entries.size(), 4u);
   EXPECT_EQ(t.dev->app().state().count, 1u);  // 5th sample at t=3600 waits
-  EXPECT_EQ(t.dev->mock().entries(1000002).size(), 1u);  // diagnostic channel
+  // Diagnostic channel: battery of every measurement in bulk (field1 only)
+  // plus one full row (all fields) in the first window.
+  const auto diag = t.dev->mock().entries(1000002);
+  size_t full = 0, battery = 0;
+  for (const auto& e : diag) {
+    if (e.values.count("field3")) {
+      ++full;
+    } else if (e.values.count("field1")) {
+      ++battery;
+    }
+  }
+  EXPECT_EQ(full, 1u);
+  EXPECT_EQ(battery, 4u);  // measurements before the window
+  std::set<std::string> diagTimes;
+  for (const auto& e : diag) diagTimes.insert(e.createdAt);
+  EXPECT_EQ(diagTimes.size(), diag.size());       // unique created_at
+  EXPECT_EQ(t.dev->app().state().battCount, 1u);  // t=3600 waits, like sample 5
+  EXPECT_EQ(t.dev->app().state().last.diagResult, gm::DiagSent);
   EXPECT_TRUE(t.dev->app().state().last.ok);
 }
 
@@ -159,4 +176,35 @@ TEST(Upload, HistoryBackfilledAfterFirstTimeSync) {
   for (size_t i = 1; i < recs.size(); ++i)
     EXPECT_GT(recs[i].epoch, recs[i - 1].epoch);
   EXPECT_LE(recs.size(), static_cast<size_t>(t.dev->app().state().nextSeq));
+}
+
+TEST(Upload, HttpDateCorrectsClockDrift) {
+  TestDevice t("datefix");
+  setup(t);
+  t.runFor(3600);  // first window: SNTP
+  const unsigned sntp = t.dev->network().syncCount();
+  EXPECT_EQ(sntp, 1u);
+  t.dev->clock().setSkewS(-40);  // RC clock 40 s slow
+  EXPECT_NE(t.dev->clock().epoch(), t.dev->clock().trueEpoch());
+  t.runFor(3600);  // next window: corrected from the Date header
+  EXPECT_EQ(t.dev->network().syncCount(), sntp);  // no extra SNTP
+  const int64_t diff = static_cast<int64_t>(t.dev->clock().epoch()) -
+                       static_cast<int64_t>(t.dev->clock().trueEpoch());
+  EXPECT_LE(diff < 0 ? -diff : diff, 1);
+  const gm::RetainedState& st = t.dev->app().state();
+  EXPECT_EQ(st.timeSource, 2u);  // HTTP Date
+  EXPECT_GE(st.lastClockFixS, 39);
+  EXPECT_LE(st.lastClockFixS, 41);
+}
+
+TEST(Upload, SntpAgainAfterADayWithoutDate) {
+  TestDevice t("nodate");
+  setup(t);
+  t.dev->http().setClock(nullptr);  // replies without a Date header
+  t.runFor(3600);
+  EXPECT_EQ(t.dev->network().syncCount(), 1u);
+  t.runFor(20 * 3600);
+  EXPECT_EQ(t.dev->network().syncCount(), 1u);  // within a day: none
+  t.runFor(5 * 3600);
+  EXPECT_EQ(t.dev->network().syncCount(), 2u);  // > 24 h: SNTP again
 }

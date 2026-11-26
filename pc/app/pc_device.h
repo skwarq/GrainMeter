@@ -66,6 +66,10 @@ class PcDevice : public gm::SystemPort {
     return ota_.rejectedVersion().c_str();
   }
   void requestRestart() override { restartPending_ = true; }
+  bool boardTempCenti(int16_t* out) override {
+    *out = static_cast<int16_t>(boardTempCenti_.load());
+    return true;
+  }
   void writePlatformJson(gm::JsonWriter& w, bool detailed) override;
   bool platformAction(const char* action, const gm::Form& args, char* msg,
                       size_t msgCap) override;
@@ -102,6 +106,7 @@ class PcDevice : public gm::SystemPort {
   std::string wakeReason_;
   std::string resetReason_;
   std::atomic<int> batteryOverrideMv_{0};
+  std::atomic<int> boardTempCenti_{2000};  // sim board_temp action
   std::atomic<unsigned> serviceRequests_{0};
 };
 
