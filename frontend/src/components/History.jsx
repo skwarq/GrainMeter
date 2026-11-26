@@ -56,9 +56,36 @@ export function RangeTabs({ range, onRange }) {
 }
 
 /** Multi-point temperature chart with per-point toggles. */
-export function HistoryCard({ feed, range, onRange, now, title, class: cls }) {
+export function HistoryCard({
+  feed,
+  range,
+  onRange,
+  now,
+  title,
+  class: cls,
+  skipMissing = false,
+  diag,
+  hasDiag = false,
+  view = 'temperature',
+  onView,
+}) {
   const { t, lang } = useI18n();
   const [hidden, setHidden] = useState(() => new Set());
+  const [batteryUnits, setBatteryUnits] = useState('pct');
+  const [wifiUnits, setWifiUnits] = useState('pct');
+  const activeView = onView && hasDiag && ['battery', 'wifi'].includes(view) ? view : 'temperature';
+  const temperature = activeView === 'temperature';
+  const pct = (activeView === 'battery' ? batteryUnits : wifiUnits) === 'pct';
+  const device = useMemo(() => {
+    const volts = {
+      entries: (diag?.entries || []).map((e) => ({
+        ...e,
+        values: [e.values[0] === null ? null : e.values[0] / 1000, e.values[1]],
+      })),
+    };
+    return pct ? devicePercentFeed(volts) : volts;
+  }, [diag, pct]);
+  const deviceLabel = t(activeView === 'battery' ? 'overview.battery' : pct ? 'hist.signalQuality' : 'hist.signal');
   const toggle = (i) => {
     const n = new Set(hidden);
     if (n.has(i)) n.delete(i);
@@ -67,40 +94,110 @@ export function HistoryCard({ feed, range, onRange, now, title, class: cls }) {
   };
   return (
     <Card
-      title={title || t('dash.history')}
+      title={title || t(temperature ? 'dash.history' : 'dash.history.' + activeView)}
       icon="diag"
       class={'dash-history' + (cls ? ' ' + cls : '')}
-      actions={<RangeTabs range={range} onRange={onRange} />}
+      actions={
+        <div class="history-controls">
+          {onView && (
+            <div class="seg history-views" role="tablist" aria-label={t('dash.historyView')}>
+              {['temperature', 'battery', 'wifi'].map((v) => {
+                const disabled = v !== 'temperature' && !hasDiag;
+                return (
+                  <button
+                    key={v}
+                    type="button"
+                    role="tab"
+                    disabled={disabled}
+                    title={disabled ? t('dash.historyNeedsDiag') : undefined}
+                    aria-describedby={disabled ? 'history-diag-hint' : undefined}
+                    aria-selected={v === activeView}
+                    class={v === activeView ? 'on' : ''}
+                    onClick={() => !disabled && onView(v)}
+                  >
+                    {t('dash.historyView.' + v)}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <RangeTabs range={range} onRange={onRange} />
+        </div>
+      }
     >
-      <div class="chips">
-        {feed.fields.map((f, i) =>
-          hasData(feed, i) ? (
-            <button
-              key={i}
-              type="button"
-              class={'chip' + (hidden.has(i) ? ' off' : '')}
-              aria-pressed={!hidden.has(i)}
-              onClick={() => toggle(i)}
-            >
-              <span class="dot" style={{ background: COLORS[i] }} />
-              {pointLabel(t, feed, i)}
-            </button>
-          ) : null,
-        )}
-      </div>
+      {onView && !hasDiag && (
+        <p id="history-diag-hint" class="muted small">
+          {t('dash.historyNeedsDiag')}
+        </p>
+      )}
+      {temperature ? (
+        <div class="chips">
+          {feed.fields.map((f, i) =>
+            hasData(feed, i) ? (
+              <button
+                key={i}
+                type="button"
+                class={'chip' + (hidden.has(i) ? ' off' : '')}
+                aria-pressed={!hidden.has(i)}
+                onClick={() => toggle(i)}
+              >
+                <span class="dot" style={{ background: COLORS[i] }} />
+                {pointLabel(t, feed, i)}
+              </button>
+            ) : null,
+          )}
+        </div>
+      ) : (
+        <div class="history-units">
+          <div class="seg" role="tablist" aria-label={deviceLabel + ': ' + t('hist.units')}>
+            {[
+              ['pct', '%'],
+              ['raw', activeView === 'battery' ? 'V' : 'dBm'],
+            ].map(([u, label]) => (
+              <button
+                key={u}
+                type="button"
+                role="tab"
+                aria-selected={pct === (u === 'pct')}
+                class={pct === (u === 'pct') ? 'on' : ''}
+                onClick={() => (activeView === 'battery' ? setBatteryUnits : setWifiUnits)(u)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {pct && <p class="muted small">{t('dash.historyHint.' + activeView)}</p>}
+        </div>
+      )}
       <LineChart
+        key={activeView + (temperature ? '' : pct ? '-pct' : '-raw')}
         lang={lang}
+        unit={temperature ? '°C' : pct ? '%' : activeView === 'battery' ? 'V' : 'dBm'}
+        digits={temperature ? 1 : pct || activeView === 'wifi' ? 0 : 2}
+        domain={!temperature && pct ? [0, 100] : undefined}
         start={now - RANGES[range]}
         end={now}
         emptyText={t('dash.noData', { range: t('dash.range.' + range) })}
-        series={feed.fields
-          .map((f, i) => ({
-            key: 'p' + i,
-            label: pointLabel(t, feed, i),
-            color: COLORS[i],
-            segments: hasData(feed, i) && !hidden.has(i) ? segments(feed, i, gapThreshold(feed)) : [],
-          }))
-          .filter((s) => s.segments.length)}
+        series={
+          temperature
+            ? feed.fields
+                .map((f, i) => ({
+                  key: 'p' + i,
+                  label: pointLabel(t, feed, i),
+                  color: COLORS[i],
+                  segments:
+                    hasData(feed, i) && !hidden.has(i) ? segments(feed, i, gapThreshold(feed), skipMissing) : [],
+                }))
+                .filter((s) => s.segments.length)
+            : [
+                {
+                  key: activeView,
+                  label: deviceLabel,
+                  color: activeView === 'battery' ? COLORS[0] : COLORS[4],
+                  segments: segments(device, activeView === 'battery' ? 0 : 1, diag ? gapThreshold(diag) * 8 : 0, true),
+                },
+              ]
+        }
       />
     </Card>
   );
@@ -203,7 +300,7 @@ function initialUnits() {
  * [battery V, RSSI dBm] (lib/feed.js deviceFeed() or the diag channel).
  * The user switches between percent (easier to read) and V / dBm.
  */
-export function DeviceCharts({ feed, start, end, gapMs }) {
+export function DeviceCharts({ feed, start, end, gapMs, skipMissing = false }) {
   const { t, lang } = useI18n();
   const [units, setUnitsState] = useState(initialUnits);
   const setUnits = (u) => {
@@ -231,7 +328,7 @@ export function DeviceCharts({ feed, start, end, gapMs }) {
         end={end}
         domain={pct ? [0, 100] : undefined}
         emptyText={t('hist.noDeviceData')}
-        series={[{ key, label, color, segments: segments(shown, i, gap) }]}
+        series={[{ key, label, color, segments: segments(shown, i, gap, skipMissing) }]}
       />
     </div>
   );

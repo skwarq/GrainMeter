@@ -4,6 +4,18 @@ Co wnosi każda wersja oprogramowania GrainMeter. Urządzenie samo tylko
 informuje o nowej wersji; instalacja jest zawsze decyzją użytkownika
 (portal → Aktualizacja → Zainstaluj).
 
+## 0.4.2
+
+2026-11-26
+
+- Więcej wolnej pamięci: kod sterownika Wi-Fi działa z flash zamiast z IRAM
+  (+33 KB sterty; w trakcie TLS minimum 62 KB zamiast 29 KB, największy wolny
+  blok ~2×). Obiekty tworzone przy pierwszym użyciu (przerwania MPI i AES,
+  semafor lwIP) powstają przy starcie, nie w środku wolnej pamięci.
+- Dashboard: bateria i sygnał Wi-Fi na dużym wykresie historii (przełącznik
+  widoku Temperatury / Bateria / Sygnał Wi-Fi), ciągłe linie zamiast kropek,
+  tabela „Zmiany” (temperatury, bateria, urządzenie).
+
 ## 0.4.1
 
 2026-11-26

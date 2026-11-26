@@ -164,6 +164,46 @@
   color: var(--on-accent);
 }
 
+.history-controls,
+.history-units {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-history .card-actions,
+.history-views {
+  max-width: 100%;
+}
+
+.history-views button {
+  min-width: 0;
+}
+
+.history-units {
+  margin-bottom: 10px;
+}
+
+.history-units p {
+  margin: 0;
+}
+
+.history-views button:disabled {
+  color: var(--muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+@media (max-width: 480px) {
+  .history-controls {
+    justify-content: flex-end;
+  }
+  .history-views button {
+    padding: 7px 9px;
+  }
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;

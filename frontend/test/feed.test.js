@@ -157,6 +157,46 @@ test('downsample keeps time order and bounds size', () => {
   assert.equal(downsample(seg.slice(0, 10), 300).length, 10);
 });
 
+test('dashboard skips sparse diagnostic fields but breaks at a real 6 h gap', () => {
+  const f = parseFeed({
+    feeds: Array.from({ length: 17 }, (_, k) => ({
+      created_at: iso(T0 + k * 15 * 60000 + (k >= 12 ? 6 * H : 0)),
+      field1: 3900 - k,
+      field2: k % 4 === 0 ? -60 - k : null,
+    })),
+  });
+  const gap = gapThreshold(f) * 8;
+  assert.deepEqual(
+    segments(f, 1, gap, true).map((s) => s.length),
+    [3, 2],
+  );
+  assert.deepEqual(
+    segments(f, 0, gap, true).map((s) => s.length),
+    [12, 5],
+  );
+  assert.equal(segments(f, 1, gap).length, 5); // portal's default is unchanged
+});
+
+test('skipped null rows cannot bridge a per-series time gap or restart', () => {
+  const f = feed(9, (h) => ({ field1: h % 4 === 0 ? h : null }));
+  f.maxGapMs = 3 * H;
+  assert.deepEqual(
+    segments(f, 0, gapThreshold(f), true).map((s) => s.length),
+    [1, 1, 1],
+  );
+  f.entries[2].restart = true;
+  assert.deepEqual(
+    segments(f, 0, 5 * H, true).map((s) => s.length),
+    [1, 2],
+  );
+  assert.deepEqual(
+    segments(f, 0, 5 * H, true)
+      .flat()
+      .map(([, v]) => v),
+    [0, 4, 8],
+  );
+});
+
 test('niceTicks', () => {
   assert.deepEqual(niceTicks(12.3, 17.8, 5), [12, 13, 14, 15, 16, 17, 18]);
   assert.deepEqual(niceTicks(-3, 22, 5), [-5, 0, 5, 10, 15, 20, 25]);

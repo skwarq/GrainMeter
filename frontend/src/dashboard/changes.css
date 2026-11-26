@@ -1,0 +1,35 @@
+.dash-changes {
+  min-width: 0;
+}
+
+.dash-changes summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.changes-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.dash-changes .dash-table {
+  min-width: 640px;
+}
+
+.dash-changes .dash-table th {
+  text-align: left;
+}
+
+.changes-time {
+  white-space: nowrap;
+}
+
+.changes-rise {
+  color: var(--danger);
+}
+
+.changes-fall {
+  color: var(--p1);
+}

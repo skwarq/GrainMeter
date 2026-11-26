@@ -201,21 +201,22 @@ export function alerts(feed, settings, now = Date.now()) {
 
 /**
  * Line segments of point i for the chart: [[[t, v], ...], ...]. A segment
- * ends at a missing value or a time gap larger than gapMs, so outages are
- * drawn as gaps and never as a line through 0.
+ * ends at a missing value or a time gap larger than gapMs. With skipMissing,
+ * absent fields are skipped and gaps are measured between actual values.
+ * Device history retains its missing-value and restart boundaries.
  */
-export function segments(feed, i, gapMs) {
+export function segments(feed, i, gapMs, skipMissing = false) {
   const out = [];
   let cur = [];
   let prevT = null;
   for (const e of feed.entries) {
     const v = e.values[i];
-    if (v === null || e.restart || (prevT !== null && e.t - prevT > gapMs)) {
+    if ((!skipMissing && v === null) || e.restart || (prevT !== null && e.t - prevT > gapMs)) {
       if (cur.length) out.push(cur);
       cur = [];
     }
     if (v !== null) cur.push([e.t, v]);
-    prevT = e.t;
+    if (!skipMissing || v !== null) prevT = e.t;
   }
   if (cur.length) out.push(cur);
   return out;

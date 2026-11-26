@@ -110,6 +110,7 @@ export function LineChart({ series, start, end, height = 300, unit = '°C', digi
         viewBox={`0 0 ${W} ${H}`}
         class="chart-svg"
         role="img"
+        onPointerDown={onMove}
         onPointerMove={onMove}
         onPointerLeave={() => setHover(null)}
       >

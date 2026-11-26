@@ -2,18 +2,30 @@ import { useCallback, useEffect, useMemo, useState } from 'preact/hooks';
 import { translate, DEFAULT_LANG, LANGS } from '../i18n/translate.js';
 import { I18nContext, tOr, useI18n } from '../components/i18n.js';
 import { Badge, Button, Card, KV, Loading, Logo } from '../components/ui.jsx';
-import { ALERT_DEFAULTS, AlertsCard, DeviceCharts, HistoryCard, PointTable } from '../components/History.jsx';
+import { ALERT_DEFAULTS, AlertsCard, HistoryCard, PointTable } from '../components/History.jsx';
 import { SiloView, TempLegend } from '../components/SiloView.jsx';
 import { batteryPercent, batteryForecast, batteryForecastText, batteryRuntimeText } from '../lib/battery.js';
 import { formatDuration } from '../lib/format.js';
-import { RANGES, alerts as findAlerts, gapThreshold, latestDiag, latestPoints } from '../lib/feed.js';
+import { RANGES, alerts as findAlerts, latestDiag, latestPoints } from '../lib/feed.js';
 import { powerTone } from '../lib/power.js';
 import { Setup } from './Setup.jsx';
 import { clearSettings, loadSettings, saveSettings } from './settings.js';
 import { loadFeed } from './thingspeak.js';
+import { ChangesCard } from './ChangesCard.jsx';
 
 const REFRESH_MS = 5 * 60 * 1000;
 const LANG_KEY = 'gm.lang';
+const VIEW_KEY = 'gm.dashboard.historyView';
+
+function initialView() {
+  try {
+    const view = localStorage.getItem(VIEW_KEY);
+    if (['temperature', 'battery', 'wifi'].includes(view)) return view;
+  } catch {
+    /* ignore */
+  }
+  return 'temperature';
+}
 
 function initialLang() {
   try {
@@ -31,6 +43,15 @@ export function App() {
   const [editing, setEditing] = useState(false);
   const [state, setState] = useState({ loading: false, main: null, diag: null, error: null, diagError: null });
   const [now, setNow] = useState(Date.now());
+  const [historyView, setHistoryView] = useState(initialView);
+  const selectHistoryView = (view) => {
+    setHistoryView(view);
+    try {
+      localStorage.setItem(VIEW_KEY, view);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const i18n = useMemo(
     () => ({
@@ -217,7 +238,17 @@ export function App() {
                 )}
               </Card>
 
-              <HistoryCard feed={feed} range={range} now={now} onRange={(r) => store({ ...settings, range: r })} />
+              <HistoryCard
+                feed={feed}
+                range={range}
+                now={now}
+                onRange={(r) => store({ ...settings, range: r })}
+                skipMissing
+                diag={state.diag}
+                hasDiag={!!settings.diagChannelId}
+                view={historyView}
+                onView={selectHistoryView}
+              />
 
               {settings.diagChannelId && (
                 <DeviceCard
@@ -230,6 +261,7 @@ export function App() {
                 />
               )}
             </div>
+            <ChangesCard main={feed} diag={state.diag} />
           </>
         )}
 
@@ -322,17 +354,6 @@ function DeviceCard({ diag, diagLast, error, t, now, range }) {
         ]}
       />
       <p class="small">{batteryRuntimeText(d.batteryRuntime, t)}</p>
-      <DeviceCharts
-        feed={{
-          entries: (diag ? diag.entries : []).map((e) => ({
-            t: e.t,
-            values: [e.values[0] === null ? null : e.values[0] / 1000, e.values[1]],
-          })),
-        }}
-        gapMs={gapThreshold(diag || diagLast) * 8}
-        start={now - RANGES[range]}
-        end={now}
-      />
     </Card>
   );
 }
