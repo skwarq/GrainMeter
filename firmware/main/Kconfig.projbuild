@@ -6,7 +6,7 @@ menu "GrainMeter"
         default 3
         help
             GPIO for the probe DATA line (Hirschmann CA 3 GD pin 2, red).
-            Default GPIO3 = header P1 pin 8 "IO3/A2" on FireBeetle 2 ESP32-C6:
+            Default GPIO3 = pin "3" (back: "3/A2"), 8th from the battery connector:
             not a strapping pin, not used on the board. Avoid GPIO4/5/8/9/15
             (strapping), 12/13 (USB), 16/17 (UART0) and GPIO0 (battery ADC).
             External 4.7 kOhm pull-up to 3V3 is required.
@@ -32,8 +32,8 @@ menu "GrainMeter"
             Button between this GPIO and GND opens the service portal straight
             from deep sleep (EXT1 wake-up) without a reset, so the samples
             waiting in RTC memory are kept. Only LP GPIO0..7 can wake the
-            ESP32-C6. Default GPIO2 = header P1 pin 9 "IO2/A1" (free on the
-            board, not a strapping pin). Add an external 10 kOhm pull-up to 3V3
+            ESP32-C6. Default GPIO2 = pin "2" (back: "2/A1"), 9th from the
+            battery connector (free on the board, not a strapping pin). Add an external 10 kOhm pull-up to 3V3
             (the internal one is enabled too).
 
     config GM_SERVICE_BUTTON_WINDOW_MS

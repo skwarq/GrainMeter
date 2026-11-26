@@ -236,9 +236,9 @@ pobierania ROM), po wgraniu naciśnij RST.
 
 | Funkcja | GPIO | Na płytce | Uwagi |
 | --- | --- | --- | --- |
-| 1-Wire DATA | **GPIO3** | złącze P1 pin 8, **„IO3/A2”** | Kconfig `GM_ONEWIRE_GPIO`; nie jest strapping, nie używany na płytce |
+| 1-Wire DATA | **GPIO3** | pin **„3”** (spód: „3/A2”), 8. od złącza baterii | Kconfig `GM_ONEWIRE_GPIO`; nie jest strapping, nie używany na płytce |
 | Pomiar akumulatora | GPIO0 (ADC1_CH0) | `ADC_BAT` | dzielnik R15/R16 = 1 MΩ / 1 MΩ (×2), C18 100 nF; obecny w V1.0 i V1.1 |
-| Przycisk serwisowy (główny) | **GPIO2** | złącze P1 pin 9, **„IO2/A1”** | przycisk do GND + 10 kΩ do 3V3; budzi z deep sleep (EXT1) bez resetu – Kconfig `GM_SERVICE_WAKE_GPIO` |
+| Przycisk serwisowy (główny) | **GPIO2** | pin **„2”** (spód: „2/A1”), 9. od złącza baterii | przycisk do GND + 10 kΩ do 3V3; budzi z deep sleep (EXT1) bez resetu – Kconfig `GM_SERVICE_WAKE_GPIO` |
 | Przycisk serwisowy (zapasowy) | GPIO9 | BOOT | czytany dopiero po starcie aplikacji (patrz niżej) |
 | LED | GPIO15 | LED „D13” | miganie w trybie serwisowym |
 | Konsola / flash | GPIO12/13 | USB-C | USB Serial/JTAG |
@@ -263,9 +263,9 @@ procedura pierwszego uruchomienia: **[docs/wiring.md](docs/wiring.md)**.
 
 | Pin | Kolor | GrainMeter |
 | --- | --- | --- |
-| 1 | niebieski | GND (P1 pin 3) |
-| 2 | czerwony | DATA → **GPIO3** (P1 pin 8) + **4,7 kΩ do 3V3** |
-| 3 | czarny | VCC sondy → **3V3** FireBeetle (P1 pin 2) – pierwsza próba |
+| 1 | niebieski | **GND** (3. od złącza baterii) |
+| 2 | czerwony | DATA → pin **„3”** (GPIO3) + **4,7 kΩ do 3V3** |
+| 3 | czarny | VCC sondy → **3V3** (2. od złącza baterii) – pierwsza próba |
 | 4 | zielony | niepodłączony (załączanie oryginalnego czytnika) |
 
 - Próba wyłącznie z **odłączonym STW-100**: na DATA oryginalnego czytnika
@@ -404,7 +404,7 @@ Wynik w `last_upload.diag` (status, portal → Wysyłka): `sent`, `failed`,
 ## Tryb serwisowy i lokalne OTA
 
 Wejście:
-1. **Przycisk serwisowy na GPIO2** (P1 pin 9, do GND): budzi urządzenie z
+1. **Przycisk serwisowy na GPIO2** (pin „2”/„2/A1”, do GND): budzi urządzenie z
    deep sleep bez resetu, więc niewysłane próbki w pamięci RTC zostają.
    Działa też, gdy urządzenie akurat nie śpi.
 2. Zapasowo: naciśnij i puść **RST**, potem w ciągu 3 s naciśnij **BOOT**

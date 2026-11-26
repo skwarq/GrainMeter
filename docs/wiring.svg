@@ -35,12 +35,12 @@
 
   <rect class="bg" x="0" y="0" width="900" height="660" rx="10"/>
   <text class="title" x="24" y="34">GrainMeter – podłączenie sondy STW-100, przycisku i zasilania</text>
-  <text class="muted" x="24" y="54">FireBeetle 2 ESP32-C6 (DFR1075), złącze P1 widziane od strony elementów · numeracja pinów wg schematu DFRobot V1.0/V1.1</text>
+  <text class="muted" x="24" y="54">FireBeetle 2 ESP32-C6 (DFR1075), listwa przy złączu baterii, nazwy jak w nadruku płytki (wierzch / spód), poz. 1 = przy złączu baterii</text>
 
   <!-- ===== Solar panel ===== -->
   <rect class="box" x="24" y="78" width="170" height="44" rx="6"/>
   <text class="h" x="36" y="97">Panel słoneczny 5 V</text>
-  <text class="muted" x="36" y="113">+ → VCC (P1-1),  − → GND</text>
+  <text class="muted" x="36" y="113">+ → VIN (poz. 1),  − → GND (poz. 3)</text>
   <path class="w vcc" d="M194 92 H560" stroke-dasharray="0"/>
   <text class="muted" x="300" y="86">5 V (wejście ładowarki CN3165)</text>
 
@@ -119,19 +119,19 @@
 
   <!-- P1 header pins -->
   <g>
-    <rect class="pin-used" x="556" y="84" width="16" height="16" rx="3"/><text x="580" y="97">1  VCC (5 V wej.)</text>
+    <rect class="pin-used" x="556" y="84" width="16" height="16" rx="3"/><text x="580" y="97">1  VIN (5 V wej.)</text>
     <rect class="pin-used" x="556" y="110" width="16" height="16" rx="3"/><text x="580" y="123">2  3V3</text>
     <rect class="pin-used" x="556" y="136" width="16" height="16" rx="3"/><text x="580" y="149">3  GND</text>
-    <rect class="pin" x="556" y="162" width="16" height="16" rx="3"/><text class="muted" x="580" y="175">4  IO20/SCL</text>
-    <rect class="pin" x="556" y="188" width="16" height="16" rx="3"/><text class="muted" x="580" y="201">5  IO19/SDA</text>
-    <rect class="pin" x="556" y="214" width="16" height="16" rx="3"/><text class="muted" x="580" y="227">6  IO5/LP_TX</text>
-    <rect class="pin" x="556" y="236" width="16" height="16" rx="3"/><text class="muted" x="580" y="249">7  IO4/LP_RX</text>
-    <rect class="pin-used" x="556" y="260" width="16" height="16" rx="3"/><text x="580" y="273" class="h">8  IO3/A2 – DATA</text>
-    <rect class="pin-used" x="556" y="288" width="16" height="16" rx="3"/><text x="580" y="301" class="h">9  IO2/A1 – serwis</text>
+    <rect class="pin" x="556" y="162" width="16" height="16" rx="3"/><text class="muted" x="580" y="175">4  SCL (20)</text>
+    <rect class="pin" x="556" y="188" width="16" height="16" rx="3"/><text class="muted" x="580" y="201">5  SDA (19)</text>
+    <rect class="pin" x="556" y="214" width="16" height="16" rx="3"/><text class="muted" x="580" y="227">6  5 (5/A4/LP_TX)</text>
+    <rect class="pin" x="556" y="236" width="16" height="16" rx="3"/><text class="muted" x="580" y="249">7  4 (4/A3/LP_RX)</text>
+    <rect class="pin-used" x="556" y="260" width="16" height="16" rx="3"/><text x="580" y="273" class="h">8  3 (3/A2) – DATA</text>
+    <rect class="pin-used" x="556" y="288" width="16" height="16" rx="3"/><text x="580" y="301" class="h">9  2 (2/A1) – serwis</text>
     <rect class="pin" x="556" y="314" width="16" height="16" rx="3"/><text class="muted" x="580" y="327">10 NC</text>
-    <rect class="pin" x="556" y="340" width="16" height="16" rx="3"/><text class="muted" x="580" y="353">11 IO15/BLK (LED)</text>
-    <rect class="pin" x="556" y="366" width="16" height="16" rx="3"/><text class="muted" x="580" y="379">12 IO6/TCS</text>
-    <rect class="pin" x="556" y="392" width="16" height="16" rx="3"/><text class="muted" x="580" y="405">13 IO7/INT</text>
+    <rect class="pin" x="556" y="340" width="16" height="16" rx="3"/><text class="muted" x="580" y="353">11 15 (15/D13, LED)</text>
+    <rect class="pin" x="556" y="366" width="16" height="16" rx="3"/><text class="muted" x="580" y="379">12 6 (6/D12/LP_SDA)</text>
+    <rect class="pin" x="556" y="392" width="16" height="16" rx="3"/><text class="muted" x="580" y="405">13 7 (7/D11/LP_SCL)</text>
     <rect class="pin" x="556" y="418" width="16" height="16" rx="3"/><text class="muted" x="580" y="431">14 NC</text>
   </g>
   <text class="h" x="760" y="160">Na płytce</text>

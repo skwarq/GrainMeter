@@ -21,7 +21,7 @@ Kopie PDF są własnością producentów; aktualne wersje zawsze pod linkami.
 ```text
 USB-C VBUS ──D2 (SS34)──┐
                         ├── VCC1 ── CN3165 (ładowarka liniowa 1-ogniwowa) ── VBAT ── akumulator (złącze BAT)
-VCC (P1 pin 1, panel) ──Q1 (AO3407)──┘                                        │
+VIN (panel, 1. pin przy złączu baterii) ──Q1 (AO3407)──┘                                        │
                                                                               ├─ D4/Q2 ── TPS62A02 (buck) ── 3V3
                                                                               └─ R15/R16 1 MΩ/1 MΩ ── GPIO0 (ADC_BAT)
 ```
@@ -32,7 +32,7 @@ VCC (P1 pin 1, panel) ──Q1 (AO3407)──┘                                
 - **Brak wejścia włączającego** – ładowania nie da się wyłączyć programowo.
 - `CHRG#` (pin 7) steruje tylko czerwoną diodą D3, `DONE#` (pin 6)
   niepodłączony – ESP nie wie, czy trwa ładowanie (możliwa przeróbka: przewód
-  od katody D3 do GPIO6 z pull-upem; stan niski = ładowanie).
+  od katody D3 do pinu „6” (GPIO6) z pull-upem; stan niski = ładowanie).
 - 3V3 (TPS62A02) zasila ESP **i sondę cały czas**, także w deep sleep.
 
 ### Diody
@@ -45,11 +45,12 @@ VCC (P1 pin 1, panel) ──Q1 (AO3407)──┘                                
 ### Piny i wybudzanie
 
 - Z deep sleep budzą tylko **LP GPIO0–7** (EXT1). BOOT (GPIO9) nie może
-  wybudzić – przycisk serwisowy jest na **GPIO2** (P1 pin 9). Pin musi być
+  wybudzić – przycisk serwisowy jest na **GPIO2** (nadruk „2”, spód „2/A1”). Pin musi być
   skonfigurowany jako LP IO przed uśpieniem (`rtc_gpio_init`), inaczej
   niepodłączony GPIO2 „pływa” i od razu budzi płytkę.
-- Wolne bez wyświetlacza: GPIO6 (P1 pin 12, „IO6/TCS”), GPIO7 (P1 pin 13,
-  „IO7/INT”) – oba LP, mogą budzić.
+- Wolne: GPIO6 (nadruk „6”, spód „6/D12/LP_SDA”), GPIO7 („7”,
+  „7/D11/LP_SCL”) – oba LP, mogą budzić (na schemacie sygnały wyświetlacza
+  TCS/INT, wolne bez wyświetlacza).
 - Kwarcu 32 kHz nie da się dodać: ESP32-C6 podłącza go do GPIO0/1, a GPIO0
   mierzy baterię. Zegar RTC chodzi z oscylatora RC i dryfuje – firmware
   koryguje go z nagłówka `Date` odpowiedzi ThingSpeak.
@@ -97,7 +98,7 @@ ryzykiem bezpieczeństwa, a płytka ładuje z panelu w każdej temperaturze.
    (wyliczone R1 ≈ 4,86 kΩ, R2 ≈ 46 kΩ; tolerancja progów ±2,5 % → odcięcie
    ok. 0 °C ± 2–3 °C). Wykonalność zależy od PCB (CN3165 w obudowie DFN-8).
 2. **ESP odcina panel**: P-MOSFET (np. AO3401A) w przewodzie panelu,
-   bramka do GPIO7 z rezystorem 100 kΩ do GND (domyślnie panel podłączony),
+   bramka do pinu „7” (GPIO7) z rezystorem 100 kΩ do GND (domyślnie panel podłączony),
    DS18B20 na ogniwie na tej samej magistrali 1-Wire; firmware odcina panel
    poniżej ~+2 °C i trzyma stan w deep sleep (wymaga dopisania w firmware).
 3. Bez przeróbek: zimą ogniwo w miejscu, które nie zamarza, albo panel odłączony.
@@ -157,7 +158,7 @@ opisuje kolorów ani progów.
   - przez USB-C płytki (kabel USB-A → USB-C): najprościej, ale przez diodę
     D2 (SS34, spadek ~0,3–0,45 V) – z 5 V zostaje ~4,6 V, w słabym świetle
     ładowanie skończy się wcześniej;
-  - lepiej na **P1 pin 1 (VCC) i GND** (np. przez wtyk USB-A z wyprowadzonymi
+  - lepiej na **VIN** (1. pin przy złączu baterii) **i GND** (3. pin) (np. przez wtyk USB-A z wyprowadzonymi
     przewodami, bez cięcia kabla panelu): wejście przez tranzystor Q1 o
     małym spadku napięcia.
   - Płytka na USB-C z samym panelem **nie** wchodzi w tryb „na biurku” –
