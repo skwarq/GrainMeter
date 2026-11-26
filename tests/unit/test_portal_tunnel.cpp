@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -664,8 +665,10 @@ TEST_F(TunnelTest, StatusSignatureMatchesSharedCanonicalEscapingVector) {
   std::ifstream file(std::string(GM_TEST_PORTAL_DIR) +
                      "/../tests/data/gm2-vectors.json");
   ASSERT_TRUE(file.good());
-  const std::string json{std::istreambuf_iterator<char>(file),
-                         std::istreambuf_iterator<char>()};
+  // Not istreambuf_iterator: GCC 13 -O2 reports a false -Wnull-dereference.
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  const std::string json = buffer.str();
   const std::string password = gm2test::field(json.c_str(), "password");
   strcpy(const_cast<gm::Config&>(device.dev->app().config()).servicePassword,
          password.c_str());

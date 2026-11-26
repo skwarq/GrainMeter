@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 
 #include "support/gm2.h"
@@ -102,8 +103,10 @@ TEST(HmacSha256, SharedGm2VectorsAndStreamingChunks) {
   std::ifstream file(std::string(GM_TEST_PORTAL_DIR) +
                      "/../tests/data/gm2-vectors.json");
   ASSERT_TRUE(file.good());
-  const std::string json{std::istreambuf_iterator<char>(file),
-                         std::istreambuf_iterator<char>()};
+  // Not istreambuf_iterator: GCC 13 -O2 reports a false -Wnull-dereference.
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  const std::string json = buffer.str();
   const std::string password = gm2test::field(json.c_str(), "password"),
                     id = gm2test::field(json.c_str(), "id"),
                     nonce = gm2test::field(json.c_str(), "nonce");

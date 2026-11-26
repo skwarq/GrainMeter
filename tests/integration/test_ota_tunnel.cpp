@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <sstream>
 #include <string>
 
 #include "support/fake_image.h"
@@ -83,8 +84,11 @@ TEST_P(OtaTunnelTest, FullImageRestartStatusAndRollback) {
   EXPECT_NE(body.find("\"bytes\":1350001"), std::string::npos);
   EXPECT_NE(body.find("\"restarting\":true"), std::string::npos);
   std::ifstream slot(device.dir + "/ota_1.bin", std::ios::binary);
-  const std::vector<uint8_t> written{std::istreambuf_iterator<char>(slot),
-                                     std::istreambuf_iterator<char>()};
+  // Not istreambuf_iterator: GCC 13 -O2 reports a false -Wnull-dereference.
+  std::stringstream buffer;
+  buffer << slot.rdbuf();
+  const std::string bytes = buffer.str();
+  const std::vector<uint8_t> written(bytes.begin(), bytes.end());
   EXPECT_EQ(written, image);
   device.dev->tick();
   EXPECT_FALSE(device.dev->restartPending());
