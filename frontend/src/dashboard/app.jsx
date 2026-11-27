@@ -8,6 +8,8 @@ import { batteryPercent, batteryForecast, batteryForecastText, batteryRuntimeTex
 import { formatDuration } from '../lib/format.js';
 import { RANGES, alerts as findAlerts, latestDiag, latestPoints } from '../lib/feed.js';
 import { powerTone } from '../lib/power.js';
+import { latestWindowMs, predictWake } from '../lib/wake.js';
+import { loadDeviceSchedule } from '../lib/device-schedule.js';
 import { Setup } from './Setup.jsx';
 import { clearSettings, loadSettings, saveSettings } from './settings.js';
 import { loadFeed } from './thingspeak.js';
@@ -209,9 +211,9 @@ export function App() {
         )}
         {!feed && !state.error && <Loading text={t('common.loading')} />}
 
-        {feed && (
+        {(feed || state.diag) && (
           <>
-            <AlertsCard feed={current} settings={{ ...ALERT_DEFAULTS, ...settings }} now={now} />
+            {current && <AlertsCard feed={current} settings={{ ...ALERT_DEFAULTS, ...settings }} now={now} />}
 
             <div class="dash-grid">
               <Card title={t('dash.siloNow')} icon="overview" class="dash-silo">
@@ -238,16 +240,26 @@ export function App() {
                 )}
               </Card>
 
-              <HistoryCard
-                feed={feed}
-                range={range}
+              {feed && (
+                <HistoryCard
+                  feed={feed}
+                  range={range}
+                  now={now}
+                  onRange={(r) => store({ ...settings, range: r })}
+                  skipMissing
+                  diag={state.diag}
+                  hasDiag={!!settings.diagChannelId}
+                  view={historyView}
+                  onView={selectHistoryView}
+                />
+              )}
+
+              <WakeCard
+                main={current}
+                diag={state.diag?.entries.length ? state.diag : state.diagLast}
                 now={now}
-                onRange={(r) => store({ ...settings, range: r })}
-                skipMissing
-                diag={state.diag}
-                hasDiag={!!settings.diagChannelId}
-                view={historyView}
-                onView={selectHistoryView}
+                lang={lang}
+                t={t}
               />
 
               {settings.diagChannelId && (
@@ -261,7 +273,7 @@ export function App() {
                 />
               )}
             </div>
-            <ChangesCard main={feed} diag={state.diag} />
+            {feed && <ChangesCard main={feed} diag={state.diag} />}
           </>
         )}
 
@@ -287,6 +299,98 @@ function LangSwitch() {
 const FUTURE_TOLERANCE_MS = 5 * 60 * 1000;
 function isFuture(tMs, nowMs) {
   return tMs - nowMs > FUTURE_TOLERANCE_MS;
+}
+
+function WakeCard({ main, diag, now, lang, t, schedule = loadDeviceSchedule() }) {
+  const d = latestDiag(diag);
+  // Newer firmware reports the intervals in the diagnostic status; otherwise
+  // use what the remote portal remembered at the last connection.
+  const mem = (d?.uploadS == null && schedule) || null;
+  const prediction = predictWake({
+    lastWindowMs: latestWindowMs(main, diag),
+    uploadS: d?.uploadS ?? mem?.upload_s,
+    measureS: d?.measureS ?? mem?.measure_s,
+    power: d?.power,
+    nowMs: now,
+  });
+  const lanWake = d?.lanWake ?? mem?.lan_wake;
+  const talkback = d?.talkback ?? mem?.talkback;
+  // Hour only for today, with the date otherwise.
+  const localTime = (ms) =>
+    new Date(ms).toLocaleString(lang === 'en' ? 'en-GB' : 'pl-PL', {
+      ...(new Date(ms).toDateString() === new Date(now).toDateString() ? {} : { day: '2-digit', month: '2-digit' }),
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  const next = prediction.windows[0];
+  const deadline =
+    next === undefined
+      ? ''
+      : ' — ' +
+        (prediction.prepareByMs <= now
+          ? t('wake.prepareNow')
+          : t('wake.prepareBy', { time: localTime(prediction.prepareByMs) }));
+  if (prediction.state === 'critical' || prediction.state === 'unknown') {
+    return (
+      <Card title={t('wake.title')} icon="clock">
+        <p class="notice">{t('wake.' + prediction.state)}</p>
+      </Card>
+    );
+  }
+  return (
+    <Card title={t('wake.title')} icon="clock">
+      <p>
+        <strong>
+          {t('wake.at', {
+            time: localTime(next),
+            left: formatDuration(Math.max(0, Math.round((next - now) / 1000))),
+          })}
+        </strong>
+      </p>
+      <KV
+        items={[
+          [t('wake.following'), prediction.windows.slice(1).map(localTime).join(' · ')],
+          d?.power && [
+            t('power.mode'),
+            <Badge key="pm" tone={powerTone(d.power)}>
+              {tOr(t, 'power.', d.power)}
+            </Badge>,
+          ],
+        ]}
+      />
+      {mem?.upload_s && (
+        <p class="muted small">
+          {t('wake.remembered', {
+            date: new Date(mem.savedAt).toLocaleDateString(lang === 'en' ? 'en-GB' : 'pl-PL'),
+          })}
+        </p>
+      )}
+      {prediction.state === 'overdue' && <p class="notice small">{t('wake.overdue')}</p>}
+      <p class="small">
+        <strong>LAN:</strong>{' '}
+        {lanWake === false ? (
+          t('wake.lanOff')
+        ) : (
+          <>
+            <code>make lan-console</code>
+            {deadline}, {t('wake.lanHint')}
+          </>
+        )}
+      </p>
+      <p class="small">
+        <strong>MQTT:</strong>{' '}
+        {talkback === false ? (
+          t('wake.mqttOff')
+        ) : (
+          <>
+            <a href="remote.html">{t('wake.remoteWake')}</a>
+            {deadline}, {t('wake.mqttHint')}
+          </>
+        )}
+      </p>
+      <p class="muted small">{t('wake.caution')}</p>
+    </Card>
+  );
 }
 
 function DeviceCard({ diag, diagLast, error, t, now, range }) {

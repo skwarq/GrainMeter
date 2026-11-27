@@ -53,6 +53,11 @@ TEST(BatteryRuntimeStatus, RuntimeWithoutVoltageHistoryAndDiagnosticUpload) {
           "\"soc_pct\":50,\"days\":357.14}"),
       std::string::npos);
   t.runFor(3600);
+  const gm::Config& cfg = t.dev->app().config();
+  const std::string wakeConfig = " up=" + std::to_string(cfg.uploadIntervalS) +
+                                 " ms=" + std::to_string(cfg.measureIntervalS) +
+                                 " lan=" + (cfg.lanWake != 0 ? "1" : "0") +
+                                 " tb=" + (cfg.talkbackId != 0 ? "1" : "0");
   const auto entries = t.dev->mock().entries(1000002);
   bool found = false;
   for (const auto& entry : entries) {
@@ -61,6 +66,7 @@ TEST(BatteryRuntimeStatus, RuntimeWithoutVoltageHistoryAndDiagnosticUpload) {
     found = true;
     EXPECT_NE(status->second.find("capacity=2500 mah=3.50 rt=357.14"),
               std::string::npos);
+    EXPECT_NE(status->second.find(wakeConfig), std::string::npos);
     EXPECT_LE(status->second.size(), 255u);
   }
   EXPECT_TRUE(found);

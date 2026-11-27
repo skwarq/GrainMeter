@@ -11,26 +11,52 @@
 TEST(ThingSpeak, RuntimeStatusFormatAndLimit) {
   char status[256];
   ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 5000, 350, 71429,
-                                     status, sizeof(status)));
-  EXPECT_STREQ(
-      status,
-      "fw=1.0 wake=timer power=normal capacity=5000 mah=3.50 rt=714.29");
+                                     3600, 900, true, true, status,
+                                     sizeof(status)));
+  EXPECT_STREQ(status,
+               "fw=1.0 wake=timer power=normal capacity=5000 mah=3.50 rt=714.29"
+               " up=3600 ms=900 lan=1 tb=1");
   gm::DiagValues d = {-1, -61, 8, 1, 3, 0, 2, 17, status};
   char out[2048];
   ASSERT_TRUE(
       gm::tsBuildDiag(d, "DIAGKEY000000001", 1700000000u, out, sizeof(out)));
   EXPECT_NE(std::string(out).find(status), std::string::npos);
   ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, -1, -1,
-                                     status, sizeof(status)));
-  EXPECT_STREQ(status, "fw=1.0 wake=timer power=normal capacity=2500");
-  ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, 1, 0,
-                                     status, sizeof(status)));
+                                     3600, 900, false, false, status,
+                                     sizeof(status)));
+  EXPECT_STREQ(status,
+               "fw=1.0 wake=timer power=normal capacity=2500"
+               " up=3600 ms=900 lan=0 tb=0");
+  ASSERT_TRUE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, 1, 0, 3600,
+                                     900, true, false, status, sizeof(status)));
   EXPECT_NE(std::string(status).find("mah=0.01 rt=0.00"), std::string::npos);
   EXPECT_FALSE(gm::tsFormatDiagStatus("1.0", "timer", "normal", 2500, 350, 100,
-                                      status, 40));
+                                      3600, 900, true, true, status, 40));
   const std::string longVersion(256, 'a');
   EXPECT_FALSE(gm::tsFormatDiagStatus(longVersion.c_str(), "timer", "normal",
-                                      2500, 350, 100, status, sizeof(status)));
+                                      2500, 350, 100, 3600, 900, true, true,
+                                      status, sizeof(status)));
+}
+
+TEST(ThingSpeak, WakeStatusFitsAndEnforces255CharacterLimit) {
+  char status[512];
+  ASSERT_TRUE(gm::tsFormatDiagStatus("0.4.2", "timer", "economy", UINT32_MAX,
+                                     INT32_MAX, INT32_MAX, UINT32_MAX,
+                                     UINT32_MAX, true, true, status, 256));
+  EXPECT_LT(std::strlen(status), 256u);
+  EXPECT_NE(std::string(status).find("up=4294967295 ms=4294967295 lan=1 tb=1"),
+            std::string::npos);
+
+  const size_t prefixLength = std::strlen(status) - std::strlen("0.4.2");
+  const std::string version(255 - prefixLength, 'a');
+  ASSERT_TRUE(gm::tsFormatDiagStatus(
+      version.c_str(), "timer", "economy", UINT32_MAX, INT32_MAX, INT32_MAX,
+      UINT32_MAX, UINT32_MAX, true, true, status, sizeof(status)));
+  EXPECT_EQ(std::strlen(status), 255u);
+  const std::string tooLong = version + 'a';
+  EXPECT_FALSE(gm::tsFormatDiagStatus(
+      tooLong.c_str(), "timer", "economy", UINT32_MAX, INT32_MAX, INT32_MAX,
+      UINT32_MAX, UINT32_MAX, true, true, status, sizeof(status)));
 }
 namespace {
 std::string fmt(uint32_t e) {

@@ -383,7 +383,20 @@ Kanał diagnostyczny (8 pól zajętych przez temperatury, więc osobny kanał):
   oknie): `field1` akumulator [mV], `field2` RSSI [dBm], `field3` znalezione
   czujniki, `field4` błędne odczyty, `field5` próbki w buforze, `field6`
   próbki utracone, `field7` licznik nieudanych wysyłek, `field8` licznik
-  wybudzeń, `status` = wersja firmware, przyczyna wybudzenia, tryb zasilania.
+  wybudzeń, `status` = `fw=… wake=… power=… capacity=… mah=… rt=… up=… ms=… lan=… tb=…`.
+  `capacity` to pojemność baterii [mAh], `mah` zużycie [mAh/dzień], `rt`
+  orientacyjny czas pracy [dni] (nieznane `mah`/`rt` są pomijane).
+  `up` i `ms` to skonfigurowane `upload_s` i `measure_s` [s], bez mnożnika
+  economy; `lan=1` oznacza włączone `lan_wake`, `tb=1` skonfigurowany TalkBack
+  (`talkback_id != 0`). Status ma najwyżej 255 znaków.
+
+Dashboard (karta **Wybudzenie**) liczy z tego najbliższe okna wysyłki, czyli
+moment, w którym działa wybudzenie z LAN (`make lan-console`) i przez MQTT
+(„Wybudź” w `remote.html`): ostatni raport + `up` zaokrąglone do pomiaru,
+w economy ×4, w critical brak okien. Zegar dryfuje, więc termin
+„najpóźniej” jest 3 min przed oknem. Starszy firmware bez `up=`: dashboard
+bierze interwały zapamiętane w przeglądarce przy ostatnim połączeniu przez
+`remote.html` (ta sama domena; portal lokalny z adresu płytki tego nie umie).
 
 Wynik w `last_upload.diag` (status, portal → Wysyłka): `sent`, `failed`,
 `not_due` (nic do wysłania w tym oknie) albo `not_configured`.

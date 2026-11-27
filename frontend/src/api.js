@@ -6,6 +6,7 @@
 
 import * as http from './transport/http.js';
 import { ApiError } from './lib/errors.js';
+import { rememberFromConfig, rememberFromStatus } from './lib/device-schedule.js';
 
 const PW_KEY = 'gm.svcpw';
 const SLOW_TIMEOUT_MS = 30000; // scan / measure / upload window can take a while
@@ -115,10 +116,16 @@ function post(path, form, timeout, signal, reconnect) {
 
 // ---- read-only -------------------------------------------------------------
 
-export const getStatus = (signal) => request('GET', '/api/status', { signal });
+// Over the remote portal (same origin as the dashboard) the schedule is
+// remembered, so the dashboard can predict the next wake-up window.
+const remember = (fn) => (r) => {
+  if (remote) fn(r);
+  return r;
+};
+export const getStatus = (signal) => request('GET', '/api/status', { signal }).then(remember(rememberFromStatus));
 export const getDiag = (signal) => request('GET', '/api/diag', { signal });
 export const getLogs = (since, signal) => request('GET', `/api/logs/${since}`, { signal });
-export const getConfig = (signal) => request('GET', '/api/config', { signal });
+export const getConfig = (signal) => request('GET', '/api/config', { signal }).then(remember(rememberFromConfig));
 export const getOta = (signal) => request('GET', '/api/ota', { signal, reconnect: true });
 export const otaBegin = (form, signal) => post('/api/ota/begin', form, 60000, signal);
 export const otaChunk = (form, signal) => post('/api/ota/chunk', form, undefined, signal);

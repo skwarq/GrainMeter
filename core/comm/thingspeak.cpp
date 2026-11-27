@@ -11,7 +11,8 @@ namespace gm {
 bool tsFormatDiagStatus(const char* firmware, const char* wake,
                         const char* power, uint32_t capacityMah,
                         int32_t mahPerDayCenti, int32_t runtimeCentiDays,
-                        char* out, size_t cap) {
+                        uint32_t uploadS, uint32_t measureS, bool lanWake,
+                        bool talkback, char* out, size_t cap) {
   if (cap > 256) cap = 256;
   int n = snprintf(out, cap, "fw=%s wake=%s power=%s capacity=%lu", firmware,
                    wake, power, static_cast<unsigned long>(capacityMah));
@@ -27,7 +28,12 @@ bool tsFormatDiagStatus(const char* firmware, const char* wake,
       return false;
     n += added;
   }
-  return true;
+  const int added = snprintf(
+      out + n, cap - static_cast<size_t>(n), " up=%lu ms=%lu lan=%u tb=%u",
+      static_cast<unsigned long>(uploadS), static_cast<unsigned long>(measureS),
+      lanWake ? 1u : 0u, talkback ? 1u : 0u);
+  return added >= 0 &&
+         static_cast<size_t>(added) < cap - static_cast<size_t>(n);
 }
 
 void tsFormatTime(uint32_t epoch, char* out, size_t cap) {

@@ -785,7 +785,8 @@ void GrainMeter::sendDiag(uint32_t nowEpoch, uint32_t nowMono, bool full) {
           GM_FW_VERSION, p_.sys->wakeReason(), powerModeName(powerMode_),
           cfg_.battCapacityMah, mah,
           batteryRuntimeCentiDays(d.batteryMv, cfg_.battCapacityMah, mah),
-          status, sizeof(status))) {
+          cfg_.uploadIntervalS, cfg_.measureIntervalS, cfg_.lanWake != 0,
+          cfg_.talkbackId != 0, status, sizeof(status))) {
     L.diagResult = DiagFailed;
     recordError("diagnostic channel: status too large");
     return;

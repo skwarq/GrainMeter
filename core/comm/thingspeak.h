@@ -56,11 +56,13 @@ struct DiagValues {
 };
 
 // Diagnostic status, max 255 bytes. Unknown mah/rt are omitted.
+// uploadS/measureS are configured intervals, without power-mode factors.
 // Returns false rather than publishing a truncated key/value.
 bool tsFormatDiagStatus(const char* firmware, const char* wake,
                         const char* power, uint32_t capacityMah,
                         int32_t mahPerDayCenti, int32_t runtimeCentiDays,
-                        char* out, size_t cap);
+                        uint32_t uploadS, uint32_t measureS, bool lanWake,
+                        bool talkback, char* out, size_t cap);
 
 bool tsBuildDiag(const DiagValues& d, const char* writeKey, uint32_t nowEpoch,
                  char* out, size_t cap);

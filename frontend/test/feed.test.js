@@ -223,7 +223,48 @@ test('latestDiag reads the diagnostic channel layout', () => {
   assert.equal(d.sensorErrors, null);
   assert.equal(d.firmware, '0.1.1');
   assert.equal(d.power, 'normal');
+  assert.equal(d.uploadS, null);
+  assert.equal(d.measureS, null);
+  assert.equal(d.lanWake, null);
+  assert.equal(d.talkback, null);
   assert.equal(latestDiag(parseFeed({ feeds: [] })), null);
+});
+
+test('latestDiag keeps wake configuration and power through battery-only rows', () => {
+  const f = parseFeed({
+    feeds: [
+      {
+        created_at: '2026-11-27T08:00:00Z',
+        field1: '3800',
+        status: 'fw=1.0 wake=timer power=economy up=3600 ms=900 lan=0 tb=1',
+      },
+      { created_at: '2026-11-27T09:00:00Z', field1: '3790' },
+    ],
+  });
+  let d = latestDiag(f);
+  assert.equal(d.t, Date.parse('2026-11-27T09:00:00Z'));
+  assert.equal(d.firmware, '1.0');
+  assert.equal(d.power, 'economy');
+  assert.equal(d.uploadS, 3600);
+  assert.equal(d.measureS, 900);
+  assert.equal(d.lanWake, false);
+  assert.equal(d.talkback, true);
+  f.entries.push(
+    ...parseFeed({
+      feeds: [
+        {
+          created_at: '2026-11-27T10:00:00Z',
+          status: 'fw=old power=normal lan=1 tb=0',
+        },
+      ],
+    }).entries,
+  );
+  d = latestDiag(f);
+  assert.equal(d.uploadS, null); // never retain configuration from an older full status
+  assert.equal(d.measureS, null);
+  assert.equal(d.power, 'normal');
+  assert.equal(d.lanWake, true);
+  assert.equal(d.talkback, false);
 });
 
 // Builds a GMH3 page: rows = [{t (s), c (centi for all points), mv, rssi, flags}]

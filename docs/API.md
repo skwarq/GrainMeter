@@ -328,6 +328,12 @@ The status stays within 255 bytes; overflow fails explicitly rather than
 truncating keys. `parseStatus` exposes these pairs in `kv`. The Pages dashboard
 prefers `rt`; without it, it calculates from `mah`, the row's voltage and
 `capacity` (2500 when absent). No usable consumption means collecting data.
+
+The row ends with `up=3600 ms=900 lan=1 tb=0`: configured `upload_s` and
+`measure_s` in seconds (without the economy factor), `lan_wake` and whether
+`talkback_id` is set. The dashboard's wake-up card predicts the next upload
+window from them (economy ×4, critical none); older firmware without them
+falls back to the values `remote.html` remembered in the browser.
 Battery-only rows between full diagnostics do not clear the latest full
 row's runtime; a newer full row without consumption does clear it.
 
