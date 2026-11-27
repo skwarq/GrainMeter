@@ -4,12 +4,14 @@ Co wnosi każda wersja oprogramowania GrainMeter. Urządzenie samo tylko
 informuje o nowej wersji; instalacja jest zawsze decyzją użytkownika
 (portal → Aktualizacja → Zainstaluj).
 
-## Unreleased
+## 0.4.3
 
-- Dashboard: karta „Wybudzenie” z trzema przewidywanymi oknami radiowymi,
-  marginesem RTC i terminem przygotowania LAN/MQTT; obsługa economy/critical;
-  dla starszego firmware interwały zapamiętane przy połączeniu przez portal
-  zdalny.
+2026-11-27
+
+- Dashboard: karta „Wybudzenie” – „Wybudzenie o godzinie HH:MM (za N min)”,
+  kolejne okna i najpóźniejszy moment na `make lan-console` albo „Wybudź”
+  w portalu zdalnym; obsługa economy/critical. Dla starszego firmware
+  interwały zapamiętane przy połączeniu przez portal zdalny.
 - Status kanału diagnostycznego: `up`, `ms`, `lan`, `tb` z konfiguracją okien,
   konsoli LAN i TalkBack.
 
