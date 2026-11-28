@@ -90,6 +90,55 @@ TEST(Ds18b20Decode, LowerResolutionMasksUndefinedBits) {
   EXPECT_EQ(decodeOk(0x0191, 0x5F), 2500);
 }
 
+TEST(Ds18b20, PointFromScratchpadFactoryBytesIsZero) {
+  uint8_t sp[9];
+  makeScratchpad(0x0191, sp);
+  EXPECT_EQ(gm::pointFromScratchpad(sp), 0);
+}
+
+TEST(Ds18b20, PointFromScratchpadValid) {
+  for (const int16_t raw :
+       {int16_t{0x0191}, int16_t{0x0550}, int16_t{0x07E0}}) {
+    uint8_t sp[9];
+    makeScratchpad(raw, sp);
+    sp[2] = sp[3] = 3;
+    sp[8] = gm::crc8Maxim(sp, 8);
+    EXPECT_EQ(gm::pointFromScratchpad(sp), 3);
+  }
+}
+
+TEST(Ds18b20, PointFromScratchpadThNotEqualTl) {
+  uint8_t sp[9];
+  makeScratchpad(0x0191, sp);
+  sp[2] = 3;
+  sp[3] = 4;
+  sp[8] = gm::crc8Maxim(sp, 8);
+  EXPECT_EQ(gm::pointFromScratchpad(sp), 0);
+}
+
+TEST(Ds18b20, PointFromScratchpadBadCrc) {
+  uint8_t sp[9];
+  makeScratchpad(0x0191, sp);
+  sp[2] = sp[3] = 3;
+  sp[8] = gm::crc8Maxim(sp, 8) ^ 1;
+  EXPECT_EQ(gm::pointFromScratchpad(sp), 0);
+}
+
+TEST(Ds18b20, PointFromScratchpadRangeAndBusErrors) {
+  for (const uint8_t point : {0, 1, 8, 9, 255}) {
+    uint8_t sp[9];
+    makeScratchpad(0x0191, sp);
+    sp[2] = sp[3] = point;
+    sp[8] = gm::crc8Maxim(sp, 8);
+    EXPECT_EQ(gm::pointFromScratchpad(sp),
+              point >= 1 && point <= 8 ? point : 0);
+  }
+  uint8_t sp[9] = {};
+  EXPECT_EQ(gm::pointFromScratchpad(sp), 0);
+  for (auto& b : sp) b = 0xFF;
+  EXPECT_EQ(gm::pointFromScratchpad(sp), 0);
+}
+
 TEST(Ds18b20Bus, ReadsSimulatedSensorAfterConversion) {
   gmpc::SimClock clock(1.0, true);
   gmpc::SimProbe probe(clock, 2);

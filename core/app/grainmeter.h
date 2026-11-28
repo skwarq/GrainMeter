@@ -167,6 +167,10 @@ class GrainMeter {
       ;
 
  private:
+  size_t assignPointHints(RomMap& next, const PointHint* hints, size_t n,
+                          uint8_t conflictPoints[kMaxPoints],
+                          size_t* conflicts);
+  bool saveHintMap(const RomMap& next, const PointHint* hints, size_t n);
   void pollTalkback();
   void refreshRemoteBudget();
   uint32_t remoteLeftS();

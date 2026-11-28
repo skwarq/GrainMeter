@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "onewire/ds18b20.h"
 
+#include "data/measurement.h"
 #include "util/crc.h"
 
 namespace gm {
@@ -61,6 +62,16 @@ ReadStatus decodeScratchpad(const uint8_t sp[kScratchpadLen], int16_t* centi) {
   const int32_t rounded = scaled >= 0 ? (scaled + 8) / 16 : (scaled - 8) / 16;
   *centi = static_cast<int16_t>(rounded);
   return ReadStatus::Ok;
+}
+
+uint8_t pointFromScratchpad(const uint8_t sp[kScratchpadLen]) {
+  int16_t centi = 0;
+  const ReadStatus status = decodeScratchpad(sp, &centi);
+  if (status != ReadStatus::Ok && status != ReadStatus::PowerOnValue &&
+      status != ReadStatus::OutOfRange) {
+    return 0;
+  }
+  return sp[2] == sp[3] && sp[2] >= 1 && sp[2] <= kMaxPoints ? sp[2] : 0;
 }
 
 bool startConversionAll(OneWireBus& bus) {

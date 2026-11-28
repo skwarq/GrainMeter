@@ -141,8 +141,8 @@ void SimProbe::buildScratchpad(Device& d, uint8_t sp[9]) {
   const int16_t raw = d.converted ? d.raw : static_cast<int16_t>(0x0550);
   sp[0] = static_cast<uint8_t>(raw & 0xFF);
   sp[1] = static_cast<uint8_t>((raw >> 8) & 0xFF);
-  sp[2] = 0x4B;  // TH
-  sp[3] = 0x46;  // TL
+  sp[2] = d.th;
+  sp[3] = d.tl;
   sp[4] = 0x7F;  // 12-bit resolution
   sp[5] = 0xFF;
   sp[6] = 0x0C;
@@ -273,6 +273,17 @@ bool SimProbe::setTemperature(int point, double tempC) {
   Device& d = devices_[static_cast<size_t>(point - 1)];
   d.tempC = tempC;
   d.fixedTemp = true;
+  return true;
+}
+
+bool SimProbe::setPointNumber(int index, uint8_t th, uint8_t tl) {
+  std::lock_guard<std::recursive_mutex> lock(mu_);
+  if (index < 1 || index > static_cast<int>(devices_.size())) {
+    return false;
+  }
+  Device& d = devices_[static_cast<size_t>(index - 1)];
+  d.th = th;
+  d.tl = tl;
   return true;
 }
 

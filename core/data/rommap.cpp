@@ -112,6 +112,59 @@ size_t RomMap::autoAssign(const Rom* roms, size_t n) {
   return added;
 }
 
+size_t RomMap::assignByHints(const PointHint* hints, size_t n,
+                             const Rom* present, size_t nPresent,
+                             uint8_t* conflictPoints, size_t conflictCap,
+                             size_t* conflicts) {
+  const auto isPresent = [&](const Rom& rom) {
+    for (size_t i = 0; i < nPresent; ++i) {
+      if (present[i] == rom) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const PointHint* claims[kMaxPoints] = {};
+  bool duplicate[kMaxPoints] = {};
+  // Collect before assigning: existing mappings must win regardless of
+  // hint order, and no claimant may win a duplicate number.
+  for (size_t i = 0; i < n; ++i) {
+    const PointHint& h = hints[i];
+    if (h.point < 1 || h.point > kMaxPoints ||
+        !familySupported(h.rom.family()) || !h.rom.crcValid() ||
+        pointOf(h.rom) != 0 || !isPresent(h.rom)) {
+      continue;
+    }
+    const size_t p = h.point - 1;
+    if (claims[p] != nullptr && claims[p]->rom != h.rom) {
+      duplicate[p] = true;
+    } else {
+      claims[p] = &h;
+    }
+  }
+  size_t added = 0;
+  size_t conflictCount = 0;
+  for (uint8_t p = 1; p <= kMaxPoints; ++p) {
+    if (duplicate[p - 1]) {
+      if (conflictPoints != nullptr && conflictCount < conflictCap) {
+        conflictPoints[conflictCount] = p;
+      }
+      ++conflictCount;
+      continue;
+    }
+    const PointHint* h = claims[p - 1];
+    const Entry* owner = findPoint(p);
+    if (h != nullptr && (owner == nullptr || !isPresent(owner->rom)) &&
+        assign(h->rom, p, -1, nullptr)) {
+      ++added;
+    }
+  }
+  if (conflicts != nullptr) {
+    *conflicts = conflictCount;
+  }
+  return added;
+}
+
 bool RomMap::serialize(char* out, size_t cap) const {
   if (cap == 0) {
     return false;

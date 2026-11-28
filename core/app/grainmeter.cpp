@@ -136,6 +136,38 @@ static void addReading(MeasureReport& m, const Rom& rom, uint8_t point) {
   r.centi = 0;
 }
 
+size_t GrainMeter::assignPointHints(RomMap& next, const PointHint* hints,
+                                    size_t n,
+                                    uint8_t conflictPoints[kMaxPoints],
+                                    size_t* conflicts) {
+  const size_t added =
+      next.assignByHints(hints, n, scan_.roms, scan_.search.found,
+                         conflictPoints, kMaxPoints, conflicts);
+  for (size_t i = 0; i < *conflicts; ++i) {
+    recordError("map: TH/TL point %u claimed by several sensors",
+                conflictPoints[i]);
+  }
+  return added;
+}
+
+bool GrainMeter::saveHintMap(const RomMap& next, const PointHint* hints,
+                             size_t n) {
+  if (!romMapSave(*p_.store, next)) {
+    recordError("map: storage write failed");
+    return false;
+  }
+  for (size_t i = 0; i < n; ++i) {
+    if (map_.pointOf(hints[i].rom) == 0 &&
+        next.pointOf(hints[i].rom) == hints[i].point) {
+      char hex[kRomTextLen + 1];
+      GM_LOGI(kTag, "map: ROM %s -> point %u (TH/TL)",
+              romToHex(hints[i].rom, hex, sizeof(hex)), hints[i].point);
+    }
+  }
+  map_ = next;
+  return true;
+}
+
 const MeasureReport& GrainMeter::measure(bool store) {
   p_.clock->checkpoint();
   MeasureReport& m = meas_;
@@ -166,6 +198,8 @@ const MeasureReport& GrainMeter::measure(bool store) {
       addReading(m, scan_.roms[i], 0);
     }
   }
+  PointHint hints[kMaxSensors];
+  size_t nHints = 0;
   for (size_t i = 0; i < m.count; ++i) {
     SensorReading& r = m.readings[i];
     if (!familySupported(r.rom.family())) {
@@ -173,8 +207,28 @@ const MeasureReport& GrainMeter::measure(bool store) {
     } else if (!m.presence) {
       r.status = ReadStatus::Missing;
     } else {
-      r.status = readSensor(*p_.bus, r.rom, &r.centi);
+      uint8_t raw[kScratchpadLen] = {};
+      r.status =
+          readSensor(*p_.bus, r.rom, &r.centi, r.point == 0 ? raw : nullptr);
+      if (r.point == 0) {
+        const uint8_t point = pointFromScratchpad(raw);
+        if (point != 0) {
+          hints[nHints++] = {r.rom, point};
+        }
+      }
     }
+  }
+  RomMap next = map_;
+  uint8_t conflictPoints[kMaxPoints];
+  size_t conflicts = 0;
+  if (assignPointHints(next, hints, nHints, conflictPoints, &conflicts) > 0 &&
+      saveHintMap(next, hints, nHints)) {
+    for (size_t i = 0; i < m.count; ++i) {
+      m.readings[i].point = map_.pointOf(m.readings[i].rom);
+    }
+  }
+  for (size_t i = 0; i < m.count; ++i) {
+    const SensorReading& r = m.readings[i];
     if (r.point != 0 && r.status != ReadStatus::Ok) {
       char hex[kRomTextLen + 1];
       recordError("point %u (%s): %s", r.point,
@@ -1275,14 +1329,45 @@ size_t GrainMeter::mapAuto() {
   if (!haveScan_) {
     scan();
   }
-  RomMap next = map_;
-  const size_t added = next.autoAssign(scan_.roms, scan_.search.found);
-  if (added > 0) {
-    if (!romMapSave(*p_.store, next)) {
-      recordError("map: storage write failed");
-      return 0;
+  PointHint hints[kMaxSensors];
+  size_t nHints = 0;
+  for (size_t i = 0; i < scan_.search.found; ++i) {
+    const Rom& rom = scan_.roms[i];
+    if (map_.pointOf(rom) != 0 || !familySupported(rom.family())) {
+      continue;
     }
-    map_ = next;
+    uint8_t raw[kScratchpadLen] = {};
+    int16_t centi = 0;
+    readSensor(*p_.bus, rom, &centi, raw);
+    const uint8_t point = pointFromScratchpad(raw);
+    if (point != 0) {
+      hints[nHints++] = {rom, point};
+    }
+  }
+  RomMap next = map_;
+  uint8_t conflictPoints[kMaxPoints];
+  size_t conflicts = 0;
+  size_t added =
+      assignPointHints(next, hints, nHints, conflictPoints, &conflicts);
+  Rom fallback[kMaxSensors];
+  size_t nFallback = 0;
+  for (size_t i = 0; i < scan_.search.found; ++i) {
+    bool conflicting = false;
+    for (size_t h = 0; h < nHints; ++h) {
+      if (hints[h].rom == scan_.roms[i]) {
+        for (size_t c = 0; c < conflicts; ++c) {
+          conflicting |= hints[h].point == conflictPoints[c];
+        }
+      }
+    }
+    // A duplicate number must not be assigned by the ROM-order fallback.
+    if (!conflicting) {
+      fallback[nFallback++] = scan_.roms[i];
+    }
+  }
+  added += next.autoAssign(fallback, nFallback);
+  if (added > 0 && !saveHintMap(next, hints, nHints)) {
+    return 0;
   }
   return added;
 }

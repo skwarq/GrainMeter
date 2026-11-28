@@ -77,6 +77,90 @@ TEST(RomMap, AutoAssignFillsFreePointsInRomOrder) {
   EXPECT_EQ(m.pointOf(rom(70)), 3);
 }
 
+TEST(RomMap, HintAssignsFreePoint) {
+  gm::RomMap m;
+  const gm::PointHint hints[] = {{rom(1), 3}};
+  const gm::Rom present[] = {rom(1)};
+  size_t conflicts = 99;
+  EXPECT_EQ(m.assignByHints(hints, 1, present, 1, nullptr, 0, &conflicts), 1u);
+  EXPECT_EQ(conflicts, 0u);
+  EXPECT_EQ(m.pointOf(rom(1)), 3);
+  ASSERT_NE(m.findPoint(3), nullptr);
+  EXPECT_EQ(m.findPoint(3)->heightCm, -1);
+  EXPECT_EQ(m.assignByHints(hints, 1, present, 1, nullptr, 0, nullptr), 0u);
+}
+
+TEST(RomMap, HintKeepsPointOfPresentOwner) {
+  gm::RomMap m;
+  ASSERT_TRUE(m.assign(rom(1), 3, 120, nullptr));
+  const gm::PointHint hints[] = {{rom(2), 3}};
+  const gm::Rom present[] = {rom(1), rom(2)};
+  EXPECT_EQ(m.assignByHints(hints, 1, present, 2, nullptr, 0, nullptr), 0u);
+  EXPECT_EQ(m.pointOf(rom(1)), 3);
+  EXPECT_EQ(m.pointOf(rom(2)), 0);
+  EXPECT_EQ(m.findPoint(3)->heightCm, 120);
+}
+
+TEST(RomMap, HintTakesPointOfAbsentOwnerAndResetsHeight) {
+  gm::RomMap m;
+  ASSERT_TRUE(m.assign(rom(1), 2, 120, nullptr));
+  const gm::PointHint hints[] = {{rom(2), 2}};
+  const gm::Rom present[] = {rom(2)};
+  EXPECT_EQ(m.assignByHints(hints, 1, present, 1, nullptr, 0, nullptr), 1u);
+  EXPECT_EQ(m.size(), 1u);
+  EXPECT_EQ(m.pointOf(rom(1)), 0);
+  EXPECT_EQ(m.pointOf(rom(2)), 2);
+  EXPECT_EQ(m.findPoint(2)->heightCm, -1);
+}
+
+TEST(RomMap, HintIgnoredForAlreadyMappedRom) {
+  gm::RomMap m;
+  ASSERT_TRUE(m.assign(rom(1), 3, 120, nullptr));
+  const gm::PointHint hints[] = {{rom(1), 5}, {rom(2), 5}};
+  const gm::Rom present[] = {rom(1), rom(2)};
+  size_t conflicts = 99;
+  EXPECT_EQ(m.assignByHints(hints, 2, present, 2, nullptr, 0, &conflicts), 1u);
+  EXPECT_EQ(conflicts, 0u);
+  EXPECT_EQ(m.pointOf(rom(1)), 3);
+  EXPECT_EQ(m.findPoint(3)->heightCm, 120);
+  EXPECT_EQ(m.pointOf(rom(2)), 5);
+}
+
+TEST(RomMap, DuplicateHintsAssignNeitherAndReportConflict) {
+  gm::RomMap m;
+  const gm::PointHint hints[] = {
+      {rom(1), 2}, {rom(2), 2}, {rom(3), 5}, {rom(4), 5}, {rom(5), 8}};
+  const gm::Rom present[] = {rom(1), rom(2), rom(3), rom(4), rom(5)};
+  uint8_t points[1] = {};
+  size_t conflicts = 0;
+  EXPECT_EQ(m.assignByHints(hints, 5, present, 5, points, 1, &conflicts), 1u);
+  EXPECT_EQ(conflicts, 2u);
+  EXPECT_EQ(points[0], 2);
+  EXPECT_EQ(m.size(), 1u);
+  EXPECT_EQ(m.pointOf(rom(5)), 8);
+}
+
+TEST(RomMap, HintOutOfRangeIgnored) {
+  gm::RomMap m;
+  const gm::PointHint hints[] = {{rom(1), 0}, {rom(2), 9}};
+  const gm::Rom present[] = {rom(1), rom(2)};
+  EXPECT_EQ(m.assignByHints(hints, 2, present, 2, nullptr, 0, nullptr), 0u);
+  EXPECT_EQ(m.size(), 0u);
+}
+
+TEST(RomMap, HintRejectsUnsupportedBadCrcAndAbsentRoms) {
+  gm::RomMap m;
+  gm::Rom bad = rom(2);
+  bad.b[7] ^= 0xFF;
+  const gm::PointHint hints[] = {
+      {rom(1, 0x10), 3}, {bad, 3}, {rom(3), 3}, {rom(4), 3}};
+  const gm::Rom present[] = {rom(1, 0x10), bad, rom(4)};
+  size_t conflicts = 0;
+  EXPECT_EQ(m.assignByHints(hints, 4, present, 3, nullptr, 0, &conflicts), 1u);
+  EXPECT_EQ(conflicts, 0u);
+  EXPECT_EQ(m.pointOf(rom(4)), 3);
+}
+
 // Mapping must survive a restart: save through the store, read back with a
 // fresh store instance (= next boot).
 TEST(RomMap, PersistsAcrossRestart) {

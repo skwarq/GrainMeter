@@ -10,6 +10,11 @@
 
 namespace gm {
 
+struct PointHint {
+  Rom rom;
+  uint8_t point;
+};
+
 // Persistent assignment ROM -> measuring point (ThingSpeak field) and the
 // sensor height above the probe tip. Points are unique; ROM codes are unique.
 class RomMap {
@@ -38,6 +43,12 @@ class RomMap {
   // Assigns unmapped supported ROMs (in ascending ROM order) to free points.
   // Returns number of new assignments.
   size_t autoAssign(const Rom* roms, size_t n);
+
+  // Only present, valid, unmapped ROMs may claim a point. Present owners
+  // win; conflicting numbers are counted even if the output is truncated.
+  size_t assignByHints(const PointHint* hints, size_t n, const Rom* present,
+                       size_t nPresent, uint8_t* conflictPoints,
+                       size_t conflictCap, size_t* conflicts);
 
   // Text form persisted in NVS / config file:
   //   "<ROMHEX>:<point>:<height>;<ROMHEX>:<point>:<height>"

@@ -27,6 +27,8 @@ class SimProbe : public gm::OneWireBus {
     bool converted;  // false -> scratchpad holds 85.0 power-on value
     int crcFaults;   // corrupt next N scratchpad reads (-1 = always)
     bool fixedTemp;
+    uint8_t th = 0x4B;
+    uint8_t tl = 0x46;
   };
 
   SimProbe(SimClock& clock, int sensors);
@@ -42,8 +44,9 @@ class SimProbe : public gm::OneWireBus {
   bool injectCrc(int point, int count);
   bool setPresent(int point, bool present);
   bool setTemperature(int point, double tempC);  // fixed value, e.g. 0.0
-  void setUnsupportedDevice(bool on);            // adds a DS18S20 (0x10)
-  void setShorted(bool on);                      // DATA stuck low
+  bool setPointNumber(int index, uint8_t th, uint8_t tl);
+  void setUnsupportedDevice(bool on);  // adds a DS18S20 (0x10)
+  void setShorted(bool on);            // DATA stuck low
 
   size_t deviceCount();
   void writeJson(gm::JsonWriter& w);

@@ -31,6 +31,9 @@ enum { kScratchpadLen = 9, kConversionTimeMs12Bit = 750 };
 // honouring the resolution bits in the configuration register).
 ReadStatus decodeScratchpad(const uint8_t sp[kScratchpadLen], int16_t* centi);
 
+// STW-100 point number (TH == TL, 1..kMaxPoints), or 0 when untrusted.
+uint8_t pointFromScratchpad(const uint8_t sp[kScratchpadLen]);
+
 // Reset + Skip ROM + Convert T for all devices. Returns presence.
 bool startConversionAll(OneWireBus& bus);
 
