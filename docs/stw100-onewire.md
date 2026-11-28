@@ -29,7 +29,7 @@ Wystarczy dowolny master 1-Wire. Programuj **jeden czujnik naraz** (sam na magis
 wtedy można użyć Skip ROM (`CC`) zamiast adresu. Przykład dla punktu 3:
 
 | Krok | Bajty | Uwagi |
-|---|---|---|
+| --- | --- | --- |
 | 1. Zapis do scratchpada | reset, `CC 4E 03 03 7F` | TH = 3, TL = 3, konfiguracja 0x7F (12 bit) |
 | 2. Sprawdzenie | reset, `CC BE`, odczyt 9 bajtów | bajty 2 i 3 = `03 03`, CRC poprawne |
 | 3. Utrwalenie w EEPROM | reset, `CC 48`, potem ≥ 10 ms linii w stanie wysokim | przy zasilaniu pasożytniczym silny pull-up na te 10 ms |
@@ -81,8 +81,8 @@ delay(20);
 
 ## Narzędzia z dochodzenia
 
-- Sniffer i emulator na ESP32-C6 (FireBeetle) z Wi-Fi i captive portalem: gałęzie
-  `copilot/ow-sniffer` i `copilot/ow-emulator` (worktree, niezmergowane).
+- Sniffer i emulator na ESP32-C6 (FireBeetle) z Wi-Fi i captive portalem:
+  [tools/ow_sniffer](../tools/ow_sniffer/README.md) i [tools/ow_emulator](../tools/ow_emulator/README.md).
 - Build diagnostyczny ML-12 (listwaTFF, gałąź `feature/onewire-diag`, niezacommitowany):
   komendy CLI `ow` (sniffer na TIM1_CH3, PE13, JP2 pin 11) i `owe` (emulator do 32
   czujników: `preset`, `rom`, `temp`, `thtl`, `raw`, `matchany`, `timing`, `log`).
