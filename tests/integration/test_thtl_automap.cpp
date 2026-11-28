@@ -165,6 +165,26 @@ TEST_F(ThTlAutomap, ReplacementTakesPoint) {
   }
 }
 
+TEST_F(ThTlAutomap, MapAutoRescansBeforeTakeover) {
+  number(1, 2);
+  ASSERT_TRUE(t.dev->probe().setPresent(2, false));
+  app->measure(true);
+  ASSERT_EQ(app->romMap().pointOf(deviceRom(1)), 2);
+  assign(1, 2, 120);
+  // A stale scan sees the owner absent and a replacement numbered 2 ...
+  ASSERT_TRUE(t.dev->probe().setPresent(1, false));
+  ASSERT_TRUE(t.dev->probe().setPresent(2, true));
+  number(2, 2);
+  app->scan();
+  // ... but the owner is back when automap runs: it keeps its point.
+  ASSERT_TRUE(t.dev->probe().setPresent(1, true));
+  app->mapAuto();
+  EXPECT_EQ(app->romMap().pointOf(deviceRom(1)), 2);
+  ASSERT_NE(app->romMap().findPoint(2), nullptr);
+  EXPECT_EQ(app->romMap().findPoint(2)->heightCm, 120);
+  EXPECT_NE(app->romMap().pointOf(deviceRom(2)), 2);
+}
+
 TEST_F(ThTlAutomap, MixedFallsBackToRomOrder) {
   for (int i = 1; i <= 4; ++i) number(i, static_cast<uint8_t>(9 - i));
   app->measure(false);

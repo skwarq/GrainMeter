@@ -1326,9 +1326,9 @@ bool GrainMeter::mapRemove(const char* romHex, char* err, size_t cap) {
 }
 
 size_t GrainMeter::mapAuto() {
-  if (!haveScan_) {
-    scan();
-  }
+  // Always a fresh scan: a TH/TL takeover depends on which owners are
+  // present right now, a cached scan may be stale.
+  scan();
   PointHint hints[kMaxSensors];
   size_t nHints = 0;
   for (size_t i = 0; i < scan_.search.found; ++i) {
