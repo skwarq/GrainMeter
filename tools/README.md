@@ -95,3 +95,14 @@ Urządzenie kończy linie "\r\n", klient wysyła "\n" (urządzenie akceptuje te�
 7. `exit` – urządzenie wysyła `BYE exit` i zamyka; urządzenie potem zasypia.
 8. Przed zamknięciem z innych powodów urządzenie wysyła `BYE <powód>` (idle, timeout, battery, restart, auth). Linię BYE wypisz na stderr jako informację.
 9. Po restarcie urządzenia (komenda restart, aktualizacja firmware) urządzenie przez ok. 120 s powtarza hello co 3 s – skrypt ma się sam ponownie połączyć i zalogować (tryb domyślny), chyba że ostatni BYE to `exit` albo użyto --once.
+
+## Narzędzia 1-Wire (dochodzenie STW-100)
+
+Samodzielne projekty ESP-IDF dla FireBeetle 2 ESP32-C6, użyte przy ustalaniu, jak
+STW-100 przypisuje czujniki do punktów (wyniki: [docs/stw100-onewire.md](../docs/stw100-onewire.md)).
+Nie wchodzą do firmware GrainMeter.
+
+- [ow_sniffer](ow_sniffer/README.md): pasywny podsłuch magistrali 1-Wire, dekodowanie
+  ramek, podgląd i pobieranie przez Wi-Fi (AP + captive portal).
+- [ow_emulator](ow_emulator/README.md): emulator do 8 czujników DS18B20 o dowolnych
+  ROM-ach, temperaturach i scratchpadzie, konfiguracja przez stronę Wi-Fi.

@@ -1,0 +1,114 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!doctype html>
+<html lang="pl">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>OW Emulator</title>
+<style>
+body{font:16px system-ui,sans-serif;max-width:1100px;margin:20px auto;padding:0 12px;background:#fafafa}
+fieldset{margin:12px 0;border:1px solid #aaa;display:flex;flex-wrap:wrap;gap:12px}
+label{display:flex;flex-direction:column;font-size:14px;gap:4px}
+input,select,button{font:inherit;padding:5px}input[type=number]{width:100px}
+.rom,.raw{width:245px}.warn{color:#b00020}pre{overflow:auto;background:#eee;padding:10px;font-size:12px}
+#message{white-space:pre-wrap}button{cursor:pointer}details{width:100%}
+</style>
+<h1>DS18B20 / STW-100</h1>
+<p>GPIO3 (lub GPIO z Kconfig). Zmiany zapisują się w NVS i działają od następnego resetu magistrali.
+Po zmianie konfiguracji czujniki wracają do stanu startowego (domyślnie 85 °C).</p>
+<p class="warn">Sprawdź napięcie DATA przed podłączeniem: maks. 3,6 V! Domyślny AP jest otwarty.</p>
+<div id="devices"></div>
+<button id="add">Dodaj czujnik</button> <button id="save">Zapisz do NVS</button>
+<button id="reload">Wczytaj konfigurację</button>
+<p id="message" role="status"></p>
+<h2>Ostatnie transakcje i liczniki</h2>
+<p><a href="/log.txt">/log.txt</a> · <a href="/config.json">/config.json</a>
+· czasy od startu ESP; bytes = pełne bajty oddane masterowi (Search liczy też bity arbitrażu).</p>
+<pre id="log">Ładowanie…</pre>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let config={devices:[]}, busy=false;
+const defaults=()=>({enabled:true,rom:'28000000000000',temperature:20,source:'fixed',
+ conversion_ms:750,powered:true,power_on_85:true,th:75,tl:70,config:127,reserved:'FF0C10',raw:''});
+function hex(text){return text.replace(/[ :\-]/g,'').toUpperCase();}
+function crc(text){
+ let c=0;for(let i=0;i<text.length;i+=2){let b=parseInt(text.slice(i,i+2),16);
+ for(let j=0;j<8;j++){const mix=(c^b)&1;c>>=1;if(mix)c^=140;b>>=1;}}return c;
+}
+function romWarning(row){
+ const text=hex(row.querySelector('[name=rom]').value),out=row.querySelector('.crc');
+ if(!/^(?:[0-9A-F]{14}|[0-9A-F]{16})$/.test(text)){out.textContent='ROM: wymagane 7 lub 8 bajtów hex';out.className='crc warn';return;}
+ const expected=crc(text.slice(0,14)).toString(16).padStart(2,'0').toUpperCase();
+ const bad=text.length===16 && text.slice(14)!==expected;
+ out.textContent=bad?'Uwaga: błędny CRC ROM! Zostanie zachowany. Oczekiwany: '+expected:'CRC ROM: '+expected+(text.length===14?' (dopisany automatycznie)':'');
+ out.className='crc'+(bad?' warn':'');
+}
+function field(row,key,title,type,value){
+ const label=document.createElement('label');label.textContent=title;
+ const el=document.createElement(type==='select'?'select':'input');el.name=key;
+ if(type==='select'){for(const [v,t] of [['fixed','Stała'],['real','Prawdziwy DS18B20 (Kconfig)']]){
+ const o=document.createElement('option');o.value=v;o.textContent=t;el.append(o);}el.value=value;}
+ else{el.type=type;if(type==='checkbox')el.checked=value;else el.value=value;}
+ if(type==='number')el.step=key==='temperature'?'0.0625':'1';
+ if(key==='rom'||key==='raw')el.className=key;
+ label.append(el);row.append(label);return el;
+}
+function collect(){
+ config.devices=[...$('devices').children].map(row=>{
+ const d={};for(const el of row.querySelectorAll('[name]')){
+ d[el.name]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;}return d;});
+ return config;
+}
+function render(){
+ $('devices').replaceChildren();
+ config.devices.forEach((d,i)=>{
+ const row=document.createElement('fieldset'),legend=document.createElement('legend');
+ legend.textContent='Czujnik '+(i+1);row.append(legend);
+ field(row,'enabled','Włączony','checkbox',d.enabled);
+ const rom=field(row,'rom','ROM: 7 bajtów auto-CRC lub 8 ręcznie','text',d.rom);
+ field(row,'temperature','Temperatura °C','number',d.temperature);
+ field(row,'source','Źródło','select',d.source);
+ const warning=document.createElement('span');warning.className='crc';row.append(warning);
+ rom.addEventListener('input',()=>romWarning(row));
+ const details=document.createElement('details'),summary=document.createElement('summary');
+ summary.textContent='Konwersja, zasilanie, alarm, surowy scratchpad';details.append(summary);
+ field(details,'conversion_ms','Konwersja ms (0..60000)','number',d.conversion_ms);
+ field(details,'powered','Zasilanie zewnętrzne (B4=1)','checkbox',d.powered);
+ field(details,'power_on_85','85 °C do pierwszej konwersji','checkbox',d.power_on_85);
+ field(details,'th','TH (surowy bajt 0..255)','number',d.th);
+ field(details,'tl','TL (surowy bajt 0..255)','number',d.tl);
+ field(details,'config','Config (31/63/95/127 = 9/10/11/12 bit)','number',d.config);
+ field(details,'reserved','Bajty 5–7 (3 hex)','text',d.reserved);
+ field(details,'raw','Scratchpad (8 hex bajtów lub puste)','text',d.raw||'');
+ row.append(details);
+ const remove=document.createElement('button');remove.textContent='Usuń';
+ remove.onclick=()=>{collect();config.devices.splice(i,1);render();};row.append(remove);
+ $('devices').append(row);romWarning(row);
+ });$('add').disabled=config.devices.length>=8;
+}
+async function load(){
+ try{const r=await fetch('/config.json',{cache:'no-store'});if(!r.ok)throw Error(await r.text());
+ config=await r.json();render();$('message').textContent='Konfiguracja wczytana.';}
+ catch(e){$('message').textContent='Błąd: '+e.message;}
+}
+$('add').onclick=()=>{collect();config.devices.push(defaults());render();};
+$('reload').onclick=load;
+$('save').onclick=async()=>{
+ if(busy)return;busy=true;$('save').disabled=true;
+ try{const c=collect();if(c.devices.length<1)throw Error('Zostaw co najmniej jeden wpis (może być wyłączony).');
+ const r=await fetch('/config.json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)});
+ if(!r.ok)throw Error(await r.text());
+ const result=await r.json();if(!result.ok)throw Error('Zapis niepotwierdzony');
+ $('message').textContent='Zapisano do NVS. Zastosowanie przy następnym resecie STW-100.';}
+ catch(e){$('message').textContent='Błąd: '+e.message;}
+ finally{busy=false;$('save').disabled=false;}
+};
+async function logs(){
+ try{const r=await fetch('/log.txt',{cache:'no-store'});if(!r.ok)throw Error(await r.text());
+ $('log').textContent=await r.text();}
+ catch(e){$('log').textContent='Błąd logu: '+e.message;}
+ setTimeout(logs,2000);
+}
+load();logs();
+</script>
+</html>

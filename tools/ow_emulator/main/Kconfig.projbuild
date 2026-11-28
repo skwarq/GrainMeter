@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MIT
+menu "OW emulator"
+config OW_SLAVE_GPIO
+    int "STW-100 DATA GPIO (open drain)"
+    range 0 30
+    default 3
+config OW_INTERNAL_PULLUP
+    bool "Internal pull-up on DATA (diode level shifter to a 5 V bus)"
+    default y
+    help
+        Wiring: STW-100 DATA (anode) -|>|- GPIO (cathode); best with an extra
+        4.7..10 kOhm resistor from GPIO to 3V3. Disable for a direct 3.3 V bus
+        or a BSS138 module, which has its own pull-ups.
+config OW_AP_PASSWORD
+    string "SoftAP password (empty or 8..63 characters)"
+    default ""
+config OW_REAL_SENSOR
+    bool "Enable separate DS18B20 master"
+    default n
+config OW_MASTER_GPIO
+    int "Real DS18B20 DATA GPIO (external 3.3 V pull-up)"
+    range 0 30
+    default 6
+endmenu
